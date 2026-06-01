@@ -1,154 +1,157 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/storage/database/pg-client';
 
-// 获取服务商下的到期产品（含流转信息）
 export async function GET(request: NextRequest) {
   try {
-    const searchParams = request.nextUrl.searchParams;
+    const { searchParams } = new URL(request.url);
+    const branchId = searchParams.get('branchId');
     const providerId = searchParams.get('providerId');
 
-    if (!providerId) {
-      return NextResponse.json({ error: '缺少服务商ID' }, { status: 400 });
+    if (!branchId && !providerId) {
+      return NextResponse.json({ success: false, message: '缺少branchId或providerId' }, { status: 400 });
     }
 
-    // 查询该服务商下所有持仓中的用户产品
-    const userProducts = await query<{
-      id: string;
-      user_id: string;
-      product_id: string;
-      purchase_price: number;
-      purchase_date: string;
-      expire_date: string;
-      status: string;
-      revenue_released: boolean;
-      expected_profit: number;
-      product_name: string;
-      product_code: string;
-      product_price: number;
-      period: number;
-      profit_rate: number;
-      market_rate: number;
-      provider_id: string;
-      username: string;
-      phone: string;
-      unique_id: string;
-      real_name: string;
-    }>(
-      `SELECT 
-        up.id, up.user_id, up.product_id, up.purchase_price, 
-        up.purchase_date, up.expire_date, up.status, up.revenue_released,
-        COALESCE(up.expected_profit, 0) as expected_profit,
-        p.name as product_name, p.code as product_code, 
-        p.price as product_price, p.period, 
-        COALESCE(p.profit_rate, 0) as profit_rate,
-        COALESCE(p.market_rate, 0) as market_rate,
-        p.provider_id,
-        u.username, u.phone, u.unique_id, u.real_name
-      FROM user_products up
-      JOIN products p ON up.product_id = p.id
-      JOIN users u ON up.user_id = u.id
-      WHERE p.provider_id = $1 AND up.status = 'holding'
-      ORDER BY up.expire_date ASC`,
-      [providerId]
-    );
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const supabaseKey = process.env.SUPABASE_SERVICE_KEY!;
+    const { createClient } = await import('@supabase/supabase-js');
+    const sb = createClient(supabaseUrl, supabaseKey);
 
-    // 查询每个产品的流转记录
-    const productIds = userProducts.map(up => up.product_id);
-    let flowRecords: Array<{
-      product_id: string;
-      flow_type: string;
-      buyer_name: string;
-      buyer_phone: string;
-      seller_name: string;
-      seller_phone: string;
-      created_at: string;
-    }> = [];
-
-    if (productIds.length > 0) {
-      flowRecords = await query(
-        `SELECT product_id, flow_type, buyer_name, buyer_phone, 
-                seller_name, seller_phone, created_at
-         FROM product_flow_records 
-         WHERE product_id = ANY($1)
-         ORDER BY created_at ASC`,
-        [productIds]
-      );
+    // 1. 找到下属服务商的 user_id 列表
+    let providerUserIds: string[] = [];
+    if (providerId) {
+      // 指定了服务商，直接用
+      providerUserIds = [providerId];
+    } else if (branchId) {
+      // 通过网点找所有下属服务商
+      const { data: provList, error: provErr } = await sb
+        .from('providers')
+        .select('user_id')
+        .eq('branch_id', branchId);
+      if (provErr) {
+        console.error('[expired-products] providers query error:', provErr);
+        return NextResponse.json({ success: false, message: '查询服务商失败' }, { status: 500 });
+      }
+      providerUserIds = (provList || []).map((p: { user_id: string }) => p.user_id);
     }
 
-    // 按产品ID分组流转记录
-    const flowMap = new Map<string, typeof flowRecords>();
-    for (const r of flowRecords) {
-      if (!flowMap.has(r.product_id)) flowMap.set(r.product_id, []);
-      flowMap.get(r.product_id)!.push(r);
+    if (providerUserIds.length === 0) {
+      return NextResponse.json({ success: true, data: { products: [], stats: { total: 0, locked: 0, unlocked: 0, totalValue: 0, totalRevenue5pct: 0 } } });
     }
 
-    // 组装结果
-    const products = userProducts.map(up => {
-      const fivePercent = Number(up.purchase_price) * 5 / 100;
-      const now = new Date();
-      const expireDate = new Date(up.expire_date);
-      const isExpired = now >= expireDate;
+    // 2. 找这些服务商下的所有会员
+    const { data: members, error: memErr } = await sb
+      .from('users')
+      .select('id, username, unique_id, phone, inviter_id, provider_id')
+      .in('provider_id', providerUserIds)
+      .eq('role', 'member');
+
+    if (memErr) {
+      console.error('[expired-products] members query error:', memErr);
+      return NextResponse.json({ success: false, message: '查询会员失败' }, { status: 500 });
+    }
+
+    const memberIds = (members || []).map((m: { id: string }) => m.id);
+
+    if (memberIds.length === 0) {
+      return NextResponse.json({ success: true, data: { products: [], stats: { total: 0, locked: 0, unlocked: 0, totalValue: 0, totalRevenue5pct: 0 } } });
+    }
+
+    // 3. 查这些会员的持仓产品
+    const { data: userProducts, error: upErr } = await sb
+      .from('user_products')
+      .select('id, user_id, product_id, purchase_price, purchase_date, expire_date, status, revenue_released, expected_profit, market_fee')
+      .in('user_id', memberIds)
+      .eq('status', 'holding');
+
+    if (upErr) {
+      console.error('[expired-products] user_products query error:', upErr);
+      return NextResponse.json({ success: false, message: '查询持仓失败' }, { status: 500 });
+    }
+
+    if (!userProducts || userProducts.length === 0) {
+      return NextResponse.json({ success: true, data: { products: [], stats: { total: 0, locked: 0, unlocked: 0, totalValue: 0, totalRevenue5pct: 0 } } });
+    }
+
+    // 4. 获取关联的产品信息
+    const productIds = [...new Set(userProducts.map((up: { product_id: string }) => up.product_id))];
+    const { data: products } = await sb
+      .from('products')
+      .select('id, name, code, price, period, profit_rate, market_rate, total_rate, provider_id')
+      .in('id', productIds);
+
+    const productMap: Record<string, any> = {};
+    (products || []).forEach((p: any) => { productMap[p.id] = p; });
+
+    // 5. 获取推荐人信息
+    const inviterIds = [...new Set((members || []).map((m: { inviter_id: string | null }) => m.inviter_id).filter(Boolean))] as string[];
+    let inviters: Record<string, any> = {};
+    if (inviterIds.length > 0) {
+      const { data: inviterData } = await sb
+        .from('users')
+        .select('id, username, unique_id')
+        .in('id', inviterIds);
+      (inviterData || []).forEach((inv: any) => { inviters[inv.id] = inv; });
+    }
+
+    // 6. 会员信息映射
+    const memberMap: Record<string, any> = {};
+    (members || []).forEach((m: any) => { memberMap[m.id] = m; });
+
+    // 7. 组装数据
+    const resultList = userProducts.map((up: any) => {
+      const product = productMap[up.product_id] || {};
+      const member = memberMap[up.user_id] || {};
+      const inviter = member.inviter_id ? inviters[member.inviter_id] : null;
+      const purchasePrice = Number(up.purchase_price) || 0;
+      const revenue5pct = purchasePrice * 0.05;
 
       return {
         id: up.id,
+        userId: up.user_id,
         productId: up.product_id,
-        productName: up.product_name,
-        productCode: up.product_code,
-        productPrice: Number(up.product_price),
-        purchasePrice: Number(up.purchase_price),
-        period: up.period,
-        profitRate: up.profit_rate,
-        marketRate: up.market_rate,
-        expectedProfit: Number(up.expected_profit),
-        fivePercent: fivePercent,
-        // 持有人信息
-        holderId: up.user_id,
-        holderName: up.username || up.real_name || '未知',
-        holderPhone: up.phone || '',
-        holderUniqueId: up.unique_id || '',
-        // 时间
+        purchasePrice,
         purchaseDate: up.purchase_date,
         expireDate: up.expire_date,
-        isExpired: isExpired,
-        // 状态
         status: up.status,
         revenueReleased: up.revenue_released,
-        // 解锁状态
-        lockStatus: !up.revenue_released ? 'locked' : 'unlocked',
-        // 流转记录
-        flowRecords: flowMap.get(up.product_id) || [],
-        // 5%智算金分配明细
-        distribution: {
-          member: fivePercent * 2 / 5,      // 2%
-          provider: fivePercent * 2 / 5,    // 2%
-          directReferrer: fivePercent * 0.25 / 5, // 0.25%
-          upstreamProvider: fivePercent * 0.25 / 5, // 0.25%
-          branch: fivePercent * 0.1 / 5,   // 0.1%
-          company: fivePercent * 0.4 / 5,  // 0.4%
-        }
+        expectedProfit: Number(up.expected_profit) || 0,
+        marketFee: Number(up.market_fee) || 0,
+        productName: product.name || '-',
+        productCode: product.code || '-',
+        productPrice: Number(product.price) || 0,
+        period: product.period || 0,
+        profitRate: Number(product.profit_rate) || 0,
+        marketRate: Number(product.market_rate) || 0,
+        totalRate: Number(product.total_rate) || 0,
+        holderName: member.username || '-',
+        holderUniqueId: member.unique_id || '-',
+        holderPhone: member.phone || '-',
+        inviterId: member.inviter_id || null,
+        inviterName: inviter?.username || '-',
+        inviterUniqueId: inviter?.unique_id || '-',
+        providerId: product.provider_id || member.provider_id || '',
+        revenue5pct,
+        memberShare: purchasePrice * 0.02,
+        providerShare: purchasePrice * 0.02,
+        inviterShare: purchasePrice * 0.0025,
+        parentProviderShare: purchasePrice * 0.0025,
+        branchShare: purchasePrice * 0.001,
+        companyShare: purchasePrice * 0.004,
+        unlockStatus: up.revenue_released ? 'unlocked' : 'locked',
       };
     });
 
-    // 统计
     const stats = {
-      total: products.length,
-      expired: products.filter(p => p.isExpired).length,
-      locked: products.filter(p => p.isExpired && p.lockStatus === 'locked').length,
-      unlocked: products.filter(p => p.revenueReleased).length,
-      totalFivePercent: products.filter(p => p.isExpired && p.lockStatus === 'locked')
-        .reduce((sum, p) => sum + p.fivePercent, 0),
+      total: resultList.length,
+      locked: resultList.filter(p => p.unlockStatus === 'locked').length,
+      unlocked: resultList.filter(p => p.unlockStatus === 'unlocked').length,
+      totalValue: resultList.reduce((sum, p) => sum + p.purchasePrice, 0),
+      totalRevenue5pct: resultList.reduce((sum, p) => sum + p.revenue5pct, 0),
     };
 
-    return NextResponse.json({
-      success: true,
-      data: products,
-      stats
-    });
-  } catch (error) {
-    console.error('获取到期产品失败:', error);
-    return NextResponse.json(
-      { error: '获取到期产品失败', detail: String(error) },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: true, data: { products: resultList, stats } });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error('[branch/expired-products] Error:', msg);
+    return NextResponse.json({ success: false, message: msg }, { status: 500 });
   }
 }

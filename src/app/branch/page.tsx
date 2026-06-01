@@ -1333,16 +1333,21 @@ export default function BranchPage() {
   };
 
   // 加载服务商到期未释放产品
-  const loadProviderExpired = async (providerId: string) => {
+  const loadProviderExpired = async (providerId?: string) => {
     setProviderExpiredLoading(true);
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`/api/branch/expired-products?providerId=${providerId}`, {
+      const branchId = localStorage.getItem('userId');
+      // 传 branchId 查网点下所有会员持仓，也可传 providerId 只查某个服务商
+      const params = new URLSearchParams();
+      if (providerId) params.set('providerId', providerId);
+      if (branchId) params.set('branchId', branchId);
+      const res = await fetch(`/api/branch/expired-products?${params.toString()}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await res.json();
       if (data.success) {
-        setProviderExpiredProducts(data.data || []);
+        setProviderExpiredProducts(data.data?.products || []);
       }
     } catch (err) {
       console.error('加载到期产品失败:', err);
@@ -1435,7 +1440,7 @@ export default function BranchPage() {
   // 批量卖出选中产品
   const handleBatchSell = async (providerId?: string) => {
     const unlockedSelected = providerExpiredProducts
-      .filter((p: any) => selectedExpiredIds.has(p.id) && p.revenue_released)
+      .filter((p: any) => selectedExpiredIds.has(p.id) && (p.revenueReleased || p.revenue_released))
       .map((p: any) => p.id);
     if (unlockedSelected.length === 0) { alert('请先选择已解锁的产品进行卖出'); return; }
     if (!confirm(`确认卖出选中的 ${unlockedSelected.length} 个已解锁产品？`)) return;
@@ -2932,11 +2937,11 @@ export default function BranchPage() {
                                           {/* 产品列表 */}
                                           <div className="space-y-2">
                                             {providerExpiredProducts.map((p: any) => {
-                                              const price = Number(p.purchase_price || p.price || 0);
-                                              const total5pct = price * 0.05;
-                                              const memberShare = price * 0.02;
-                                              const provShare = price * 0.02;
-                                              const isUnlocked = p.revenue_released === true;
+                                              const price = Number(p.purchasePrice || p.productPrice || 0);
+                                              const total5pct = p.revenue5pct || price * 0.05;
+                                              const memberShare = p.memberShare || price * 0.02;
+                                              const provShare = p.providerShare || price * 0.02;
+                                              const isUnlocked = p.revenueReleased === true;
                                               const isSold = p.status === 'sold';
                                               const isSelected = selectedExpiredIds.has(p.id);
                                               return (
@@ -2958,8 +2963,8 @@ export default function BranchPage() {
                                                     {/* 产品信息 */}
                                                     <div className="flex-1 min-w-0">
                                                       <div className="flex items-center gap-2 mb-1.5">
-                                                        <span className="font-medium">{p.product_name || p.name || '-'}</span>
-                                                        <span className="font-mono text-xs text-gray-400">{p.product_code || p.code || '-'}</span>
+                                                        <span className="font-medium">{p.productName || '-'}</span>
+                                                        <span className="font-mono text-xs text-gray-400">{p.productCode || '-'}</span>
                                                         {isSold ? (
                                                           <Badge className="bg-gray-100 text-gray-500 text-xs">已卖出</Badge>
                                                         ) : isUnlocked ? (
@@ -2971,12 +2976,12 @@ export default function BranchPage() {
                                                       <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-1 text-sm">
                                                         <div><span className="text-gray-400">价格：</span><span className="font-semibold">¥{price.toLocaleString()}</span></div>
                                                         <div><span className="text-gray-400">周期：</span>{p.period}天</div>
-                                                        <div><span className="text-gray-400">到期：</span><span className="text-red-500 text-xs">{p.expire_date?.substring(0, 16)?.replace('T', ' ')}</span></div>
-                                                        <div><span className="text-gray-400">持有人：</span>{p.member_name || '-'}{p.member_unique_id ? ` [${p.member_unique_id}]` : ''}</div>
+                                                        <div><span className="text-gray-400">到期：</span><span className="text-red-500 text-xs">{p.expireDate?.substring(0, 16)?.replace('T', ' ')}</span></div>
+                                                        <div><span className="text-gray-400">持有人：</span>{p.holderName || '-'}{p.holderUniqueId ? ` [${p.holderUniqueId}]` : ''}</div>
                                                         <div><span className="text-gray-400">5%智算金：</span><span className="text-amber-600 font-semibold">¥{total5pct.toFixed(2)}</span></div>
                                                         <div><span className="text-gray-400">会员2%：</span><span className="text-blue-600">¥{memberShare.toFixed(2)}</span></div>
                                                         <div><span className="text-gray-400">服务商2%：</span><span className="text-purple-600">¥{provShare.toFixed(2)}</span></div>
-                                                        <div><span className="text-gray-400">流转：</span>{p.flow_type === 'provider_match' ? '服务商→会员' : '会员间流转'}</div>
+                                                        <div><span className="text-gray-400">手机号：</span>{p.holderPhone || '-'}</div>
                                                       </div>
                                                     </div>
                                                     {/* 操作按钮 */}
@@ -2984,7 +2989,7 @@ export default function BranchPage() {
                                                       {!isUnlocked && !isSold && (
                                                         <Button
                                                           size="sm"
-                                                          onClick={() => handleReleaseOne(p.id, provider.id)}
+                                                          onClick={() => handleReleaseOne(p.id, p.providerId || provider.id)}
                                                           disabled={releasingIds.has(p.id)}
                                                           className="bg-amber-500 hover:bg-amber-600 text-white text-xs"
                                                         >
