@@ -3417,7 +3417,7 @@ const [copySuccess, setCopySuccess] = useState(false);
                                             const stock = product.stock || 0;
                                             const exchanged = product.exchanged_count || 0;
                                             const remaining = stock - exchanged;
-                                            const canAfford = (user?.points || 0) >= product.points_cost;
+                                            const canAfford = (user?.points || 0) >= (product.points_price || product.points_cost || 0);
                                             const isSoldOut = remaining <= 0;
                                             return (
                                                 <div key={product.id} className="border rounded-lg overflow-hidden bg-white hover:shadow-md transition-shadow">
@@ -3433,7 +3433,7 @@ const [copySuccess, setCopySuccess] = useState(false);
                                                         )}
                                                         <div className="flex items-center justify-between">
                                                             <div>
-                                                                <span className="text-amber-600 font-bold">{product.points_cost} 积分</span>
+                                                                <span className="text-amber-600 font-bold">{product.points_price || product.points_cost} 积分</span>
                                                                 <div className="flex items-center gap-2 mt-1">
                                                                     <Badge className={isSoldOut ? 'bg-red-100 text-red-700' : remaining <= 5 ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'}>
                                                                         {isSoldOut ? '已售罄' : `库存 ${remaining}`}
