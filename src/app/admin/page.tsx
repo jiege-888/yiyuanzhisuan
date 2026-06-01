@@ -13,7 +13,8 @@ import { MyProfile } from '@/components/admin/MyProfile';
 import { 
   LayoutDashboard, 
   Database, 
-  Building2, 
+  Building2,
+  Banknote,
   UserCog, 
   Users, 
   Package, 
@@ -5309,6 +5310,34 @@ export default function AdminPage() {
 
     return (
     <div className="space-y-4">
+      {/* 运营账号 & 智算金账号 */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Card className="bg-gradient-to-br from-amber-500 to-amber-700 text-white">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm opacity-80">运营账号余额</div>
+                <div className="text-3xl font-bold mt-1">¥{Number(releaseStats?.total_company_share || 0).toLocaleString()}</div>
+                <div className="text-xs opacity-70 mt-1">提现手续费 + 公司运营沉淀</div>
+              </div>
+              <Building2 className="w-10 h-10 opacity-40" />
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="bg-gradient-to-br from-cyan-500 to-cyan-700 text-white">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm opacity-80">智算金账号余额</div>
+                <div className="text-3xl font-bold mt-1">¥{Number(releaseStats?.total_company_share || 0).toLocaleString()}</div>
+                <div className="text-xs opacity-70 mt-1">公司运营分成0.4%</div>
+              </div>
+              <Building2 className="w-10 h-10 opacity-40" />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
       {/* 总统计卡片 */}
       <Card>
         <CardHeader>
