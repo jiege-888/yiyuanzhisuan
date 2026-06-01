@@ -5280,14 +5280,18 @@ export default function AdminPage() {
             <CardTitle className="text-base flex items-center gap-2"><Coins className="w-4 h-4" />平台流通数据</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+              <div className="text-center p-4 bg-amber-50 rounded-lg">
+                <p className="text-2xl font-bold text-amber-700">¥{((circulation.totalPoints || 0)).toLocaleString()}</p>
+                <p className="text-sm text-amber-600">智算金总量</p>
+              </div>
               <div className="text-center p-4 bg-green-50 rounded-lg">
                 <p className="text-2xl font-bold text-green-700">¥{((circulation.totalBalance || 0)).toLocaleString()}</p>
-                <p className="text-sm text-green-600">智算金流通总额（余额）</p>
+                <p className="text-sm text-green-600">收益余额</p>
               </div>
-              <div className="text-center p-4 bg-amber-50 rounded-lg">
-                <p className="text-2xl font-bold text-amber-700">{((circulation.totalPoints || 0)).toLocaleString()}</p>
-                <p className="text-sm text-amber-600">产力值总量（能量值）</p>
+              <div className="text-center p-4 bg-orange-50 rounded-lg">
+                <p className="text-2xl font-bold text-orange-700">{((circulation.totalUserPoints || 0)).toLocaleString()}</p>
+                <p className="text-sm text-orange-600">积分总量</p>
               </div>
               <div className="text-center p-4 bg-blue-50 rounded-lg">
                 <p className="text-2xl font-bold text-blue-700">{users.branches || 0}</p>
@@ -5298,9 +5302,9 @@ export default function AdminPage() {
                 <p className="text-sm text-purple-600">服务商</p>
               </div>
             </div>
-            {/* 产力值分布明细 */}
+            {/* 智算金分布明细 */}
             <div className="mt-4 p-4 bg-muted/50 rounded-lg">
-              <p className="text-sm font-medium text-muted-foreground mb-3">产力值分布明细</p>
+              <p className="text-sm font-medium text-muted-foreground mb-3">智算金分布明细</p>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 rounded-full bg-blue-500"></div>
@@ -5664,7 +5668,7 @@ export default function AdminPage() {
                   </div>
                   <div className="bg-teal-50 border border-teal-200 rounded-lg p-4 text-center">
                     <div className="text-2xl font-bold text-teal-600">¥{(accountsData.stats?.totalHoldingToken || 0).toLocaleString()}</div>
-                    <div className="text-sm text-teal-600">产力值总值</div>
+                    <div className="text-sm text-teal-600">智算金总值</div>
                   </div>
                 </div>
 
@@ -5680,7 +5684,7 @@ export default function AdminPage() {
                         <th className="text-left py-3 px-4">隶属关系</th>
                         <th className="text-left py-3 px-4">推荐人</th>
                         <th className="text-left py-3 px-4">智算金</th>
-                        <th className="text-left py-3 px-4">产力值</th>
+                        <th className="text-left py-3 px-4">智算金</th>
                         <th className="text-left py-3 px-4">算力值</th>
                         <th className="text-left py-3 px-4">注册日期</th>
                         <th className="text-left py-3 px-4">状态</th>
@@ -6286,7 +6290,7 @@ export default function AdminPage() {
                 </div>
                 {clearDataUser.role === 'member' && (
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">产力值</span>
+                    <span className="text-muted-foreground">智算金</span>
                     <span className="font-medium text-blue-600">¥{(clearDataUser.holding_token || 0).toLocaleString()}</span>
                   </div>
                 )}

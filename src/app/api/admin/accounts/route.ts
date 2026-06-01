@@ -165,7 +165,7 @@ export async function GET(request: NextRequest) {
 
     if (usersError) throw usersError;
 
-    // 查询每个用户的持有产力值（holding状态的user_products总purchase_price）
+    // 查询每个用户的持有智算金（holding状态的user_products总purchase_price）
     const { data: holdingData } = await client
       .from('user_products')
       .select('user_id, purchase_price')
@@ -193,7 +193,7 @@ export async function GET(request: NextRequest) {
       userIdMap.set(u.id, u.username || u.real_name || '-');
     });
 
-    // 给每个用户附加 holding_token(产力值)、quota_balance(算力值) 和隶属关系名称
+    // 给每个用户附加 holding_token(智算金)、quota_balance(算力值) 和隶属关系名称
     let usersWithHolding = (allUsers || []).map((u: any) => ({
       ...u,
       holding_token: holdingTokenMap[u.id] || 0,
