@@ -56,14 +56,12 @@ export async function POST(request: NextRequest) {
       [userProduct.product_id]
     );
 
-    // 持仓时间锁检查 - 按天数计算，到期当天中午12点解锁
+    // 持仓时间锁检查 - 直接比较当前时间与到期时间
     const expireDate = new Date(userProduct.expire_date);
-    const unlockTime = new Date(expireDate);
-    unlockTime.setHours(12, 0, 0, 0);
     const now = new Date();
 
-    if (now < unlockTime) {
-      const remainingMs = unlockTime.getTime() - now.getTime();
+    if (now < expireDate) {
+      const remainingMs = expireDate.getTime() - now.getTime();
       const remainingHours = Math.ceil(remainingMs / (1000 * 60 * 60));
       const remainingDays = Math.floor(remainingHours / 24);
       const hoursLeft = remainingHours % 24;
@@ -72,7 +70,7 @@ export async function POST(request: NextRequest) {
         error: '持仓时间不足',
         data: {
           code: 'HOLD_TIME_LOCK',
-          message: `${product?.period || 7}天产品需到期后才能出售，还需等待${remainingDays > 0 ? remainingDays + '天' : ''}${hoursLeft}小时（到期日中午12:00解锁）`,
+          message: `${product?.period || 7}天产品需到期后才能出售，还需等待${remainingDays > 0 ? remainingDays + '天' : ''}${hoursLeft}小时`,
           canSell: false,
           expireDate: userProduct.expire_date,
         },
@@ -83,15 +81,12 @@ export async function POST(request: NextRequest) {
     if (!userProduct.revenue_released) {
       const profitRate = parseFloat(product?.profit_rate || userProduct.profit_rate || 0);
       const memberProfit = parseFloat(userProduct.purchase_price) * (profitRate / 100);
-      const marketRate = parseFloat(product?.market_rate || 0);
-      const marketPool = parseFloat(userProduct.purchase_price) * (marketRate / 100);
 
-      // 会员收益到账 = profit_rate收益 + 产品价格2%返还（写入energy_value智算金）
-      const memberShare = parseFloat(userProduct.purchase_price) * 0.02;  // 会员 2%
-      const memberTotalGain = memberProfit + memberShare;
+      // 会员收益到账 → balance（不是energy_value）
+      // 市场费在购买时已经分配给各角色（balance），这里不再重复分配
       await execute(
-        `UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2`,
-        [memberTotalGain, userId]
+        `UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2`,
+        [memberProfit, userId]
       );
       await execute(
         `INSERT INTO energy_transactions (user_id, type, amount, note, created_at)
@@ -99,83 +94,18 @@ export async function POST(request: NextRequest) {
         [userId, memberProfit,
          `产品「${product?.name || '未知产品'}」到期释放收益${profitRate}%`]
       );
-      if (memberShare > 0) {
-        await execute(
-          `INSERT INTO energy_transactions (user_id, type, amount, note, created_at)
-           VALUES ($1, 'market_fee_return', $2, $3, NOW())`,
-          [userId, memberShare, '产品到期市场费返还40%']
-        );
-      }
-
-      // 服务商收益 2%（写入energy_value智算金）
-      const providerShare = parseFloat(userProduct.purchase_price) * 0.02;
-      if (product?.provider_id && providerShare > 0) {
-        await execute(
-          `UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2`,
-          [providerShare, product.provider_id]
-        );
-        await execute(
-          `INSERT INTO energy_transactions (user_id, type, amount, note, created_at)
-           VALUES ($1, 'provider_revenue', $2, $3, NOW())`,
-          [product.provider_id, providerShare, '会员产品到期，服务商分成2%']
-        );
-      }
-
-      // 直推人收益 0.25%（写入energy_value智算金）
-      const directShare = parseFloat(userProduct.purchase_price) * 0.0025;
-      const memberData = await queryOne<any>('SELECT inviter_id FROM users WHERE id = $1', [userId]);
-      if (memberData?.inviter_id && directShare > 0) {
-        await execute(
-          `UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2`,
-          [directShare, memberData.inviter_id]
-        );
-      }
-
-      // 上级服务商收益 0.25%（写入energy_value智算金）
-      const parentProviderShare = parseFloat(userProduct.purchase_price) * 0.0025;
-      let noParentShare = 0;
-      if (product?.provider_id) {
-        const providerInfo = await queryOne<any>('SELECT branch_id, parent_provider_id FROM providers WHERE user_id = $1', [product.provider_id]);
-        if (providerInfo?.parent_provider_id && parentProviderShare > 0) {
-          await execute(
-            `UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2`,
-            [parentProviderShare, providerInfo.parent_provider_id]
-          );
-        } else if (parentProviderShare > 0) {
-          // 无上级服务商时，0.25%归网点
-          noParentShare = parentProviderShare;
-        }
-        // 网点收益 0.1%（写入energy_value智算金，含无上级服务商时的0.25%）
-        const branchShare = parseFloat(userProduct.purchase_price) * 0.001;
-        const branchTotalShare = branchShare + noParentShare;
-        if (providerInfo?.branch_id && branchTotalShare > 0) {
-          await execute(
-            `UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2`,
-            [branchTotalShare, providerInfo.branch_id]
-          );
-        }
-      }
-
-      // 总台收益 0.4%（写入energy_value智算金）
-      const companyShare = parseFloat(userProduct.purchase_price) * 0.004;
-      const adminUser = await queryOne<any>('SELECT id FROM users WHERE role = $1 LIMIT 1', ['admin']);
-      if (adminUser && companyShare > 0) {
-        await execute(
-          `UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2`,
-          [companyShare, adminUser.id]
-        );
-      }
 
       // 记录member_revenue
       const holdingHours = (now.getTime() - new Date(userProduct.purchase_date).getTime()) / (1000 * 60 * 60);
       const holdingDays = Math.max(1, Math.floor(holdingHours / 24));
       const totalRate = parseFloat(product?.total_rate || 0);
+      const marketRate = parseFloat(product?.market_rate || 0);
       await execute(
         `INSERT INTO member_revenue 
          (user_id, user_product_id, principal, profit, total_amount, converted_to_energy, status, product_name, product_code, product_period, total_rate, profit_rate, market_rate, holding_days)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
-        [userId, userProductId, parseFloat(userProduct.purchase_price), memberTotalGain,
-         parseFloat(userProduct.purchase_price) + memberTotalGain, 0, 'available',
+        [userId, userProductId, parseFloat(userProduct.purchase_price), memberProfit,
+         parseFloat(userProduct.purchase_price) + memberProfit, 0, 'available',
          product?.name || '未知产品', product?.code || '', product?.period || 1,
          totalRate, profitRate, marketRate, holdingDays]
       );

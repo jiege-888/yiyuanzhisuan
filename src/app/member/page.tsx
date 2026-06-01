@@ -476,16 +476,14 @@ const [copySuccess, setCopySuccess] = useState(false);
                 setPurchaseLimits(purchaseLimitsData.data);
             }
             // 自动释放到期收益：检查所有已到期但未释放收益的产品
-            if (productsData.success && Array.isArray(productsData.data)) {
+            // 使用 assetsData（包含 revenue_released 字段），不用 productsData
+            if (assetsData.success && assetsData.data?.products) {
                 const now = new Date();
-                const expiredUnreleased = productsData.data.filter((up: any) => {
+                const expiredUnreleased = assetsData.data.products.filter((up: any) => {
                     if (up.status !== 'holding' || up.revenue_released) return false;
                     if (!up.expire_date) return false;
-                    const expireDate = new Date(up.expire_date);
-                    // 到期当天中午12点后
-                    const unlockTime = new Date(expireDate);
-                    unlockTime.setHours(12, 0, 0, 0);
-                    return now >= unlockTime;
+                    // 直接比较当前时间与到期时间，不做中午12点限制
+                    return now >= new Date(up.expire_date);
                 });
 
                 if (expiredUnreleased.length > 0) {
@@ -501,11 +499,28 @@ const [copySuccess, setCopySuccess] = useState(false);
                             body: JSON.stringify({ userId: user?.id })
                         });
                         const releaseData = await releaseRes.json();
-                        if (releaseData.success) {
-                            console.log('[member] 到期收益已自动释放');
-                            // 更新用户余额（从返回数据中获取）
-                            if (releaseData.data?.userEnergyValue !== undefined) {
-                                setUser((prev: any) => prev ? { ...prev, energy_value: releaseData.data.userEnergyValue } : prev);
+                        if (releaseData.success && releaseData.data?.released > 0) {
+                            console.log('[member] 到期收益已自动释放:', releaseData.message);
+                            // 更新用户余额
+                            if (releaseData.data?.userBalance !== undefined) {
+                                setUser((prev: any) => prev ? { ...prev, balance: releaseData.data.userBalance } : prev);
+                            }
+                            // 刷新持仓数据以反映释放状态
+                            const refreshedAssets = await fetch(`/api/member/assets?userId=${user?.id}`, {
+                                headers: { 'Authorization': `Bearer ${token}` }
+                            });
+                            const refreshedData = await refreshedAssets.json();
+                            if (refreshedData.success && refreshedData.data?.products) {
+                                const refreshedMap = new Map();
+                                refreshedData.data.products.forEach((p: any) => {
+                                    if (!refreshedMap.has(p.id)) {
+                                        refreshedMap.set(p.id, p);
+                                    }
+                                });
+                                setUserProducts(Array.from(refreshedMap.values()));
+                                if (refreshedData.data.stats) {
+                                    setStats((prev: any) => ({ ...prev, ...refreshedData.data.stats }));
+                                }
                             }
                         }
                     } catch (e) {
@@ -2934,8 +2949,10 @@ const [copySuccess, setCopySuccess] = useState(false);
                                                                 ) : up.status === "pending_match" ? (
                                                                     <Badge className="bg-cyan-100 text-cyan-700">待匹配</Badge>
                                                                 ) : up.status === "holding" && (
-                                                                    canSell ? (
-                                                                        <Badge className="bg-green-100 text-green-700">已解锁</Badge>
+                                                                    canSell && revenueReleased ? (
+                                                                        <Badge className="bg-green-100 text-green-700">可卖出</Badge>
+                                                                    ) : canSell ? (
+                                                                        <Badge className="bg-yellow-100 text-yellow-700">待释放</Badge>
                                                                     ) : (
                                                                         <Badge className="bg-red-100 text-red-700">
                                                                             <Lock className="w-3 h-3 mr-1" />
@@ -2948,7 +2965,9 @@ const [copySuccess, setCopySuccess] = useState(false);
                                                                 <Badge
                                                                     className={
                                                                         up.status === "pending_confirm" ? "bg-amber-100 text-amber-700" :
-                                                                        up.status === "holding" ? "bg-blue-100 text-blue-700" : 
+                                                                        up.status === "holding" && !isExpired ? "bg-blue-100 text-blue-700" : 
+                                                                        up.status === "holding" && isExpired && revenueReleased ? "bg-green-100 text-green-700" : 
+                                                                        up.status === "holding" && isExpired && !revenueReleased ? "bg-orange-100 text-orange-700" : 
                                                                         up.status === "pending_sell" ? "bg-yellow-100 text-yellow-700" : 
                                                                         up.status === "transferring" ? "bg-orange-100 text-orange-700" :
                                                                         up.status === "repurchase_pending" ? "bg-purple-100 text-purple-700" :
@@ -2960,7 +2979,9 @@ const [copySuccess, setCopySuccess] = useState(false);
                                                                         "bg-gray-100 text-gray-700"
                                                                     }>
                                                                     {up.status === "pending_confirm" ? "已申购待确认" : 
-                                                                     up.status === "holding" ? "运算中" : 
+                                                                     up.status === "holding" && !isExpired ? "运算中" : 
+                                                                     up.status === "holding" && isExpired && revenueReleased ? "已到期" : 
+                                                                     up.status === "holding" && isExpired && !revenueReleased ? "待释放" : 
                                                                      up.status === "pending_sell" ? "待审核" : 
                                                                      up.status === "transferring" ? "流转中" :
                                                                      up.status === "repurchase_pending" ? "待确认回购" :
@@ -2983,21 +3004,28 @@ const [copySuccess, setCopySuccess] = useState(false);
                                                                     className="opacity-50"
                                                                 >运算中
                                                                 </Button>}
-                                                                {up.status === "holding" && isExpired && <Button
-                                                                    size="sm"
-                                                                    className="bg-green-500 hover:bg-green-600 text-white"
-                                                                    disabled
-                                                                >
-                                                                    {revenueReleased ? '收益已到账' : '待释放'}
-                                                                </Button>}
-                                                                {up.status === "holding" && isExpired && <Button
-                                                                    size="sm"
-                                                                    variant="outline"
-                                                                    onClick={() => {
-                                                                        setSelectedUserProduct(up);
-                                                                        setShowSellDialog(true);
-                                                                    }}>卖出
-                                                                </Button>}
+                                                                {up.status === "holding" && isExpired && !revenueReleased && (
+                                                                    <Button
+                                                                        size="sm"
+                                                                        className="bg-orange-500 hover:bg-orange-600 text-white"
+                                                                        disabled
+                                                                    >
+                                                                        释放中...
+                                                                    </Button>
+                                                                )}
+                                                                {up.status === "holding" && isExpired && revenueReleased && (
+                                                                    <>
+                                                                        <span className="text-xs text-green-600 mr-2">收益已到账</span>
+                                                                        <Button
+                                                                            size="sm"
+                                                                            className="bg-green-500 hover:bg-green-600 text-white"
+                                                                            onClick={() => {
+                                                                                setSelectedUserProduct(up);
+                                                                                setShowSellDialog(true);
+                                                                            }}>卖出
+                                                                        </Button>
+                                                                    </>
+                                                                )}
                                                                 {up.status === "pending_sell" && <span className="text-sm text-orange-500">售卖中</span>}
                                                                 {up.status === "repurchased" && <span className="text-sm text-green-600">已完成</span>}
                                                                 {up.status === "transferred" && <span className="text-sm text-green-600">已转出</span>}
