@@ -176,6 +176,24 @@ export default function BranchPage() {
   const [capitalFlowTab, setCapitalFlowTab] = useState('all');
   const [capitalFlowPage, setCapitalFlowPage] = useState(1);
 
+  // 产品信息相关状态
+  const [branchProducts, setBranchProducts] = useState<any[]>([]);
+  const [branchProductsLoading, setBranchProductsLoading] = useState(false);
+
+  // 到期释放相关状态
+  const [expiredProducts, setExpiredProducts] = useState<any[]>([]);
+  const [expiredProductsLoading, setExpiredProductsLoading] = useState(false);
+  const [releasingIds, setReleasingIds] = useState<Set<string>>(new Set());
+  const [releaseAllLoading, setReleaseAllLoading] = useState(false);
+
+  // 服务商详情展开状态
+  const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
+  const [providerDetailTab, setProviderDetailTab] = useState<'products' | 'release'>('products');
+  const [providerProducts, setProviderProducts] = useState<any[]>([]);
+  const [providerDetailLoading, setProviderDetailLoading] = useState(false);
+  const [providerExpiredProducts, setProviderExpiredProducts] = useState<any[]>([]);
+  const [providerExpiredLoading, setProviderExpiredLoading] = useState(false);
+
   // 智算金互转相关状态
   const [showTransferDialog, setShowTransferDialog] = useState(false);
   const [transferSearchQuery, setTransferSearchQuery] = useState("");
@@ -1197,6 +1215,143 @@ export default function BranchPage() {
   };
 
   // 处理智算金转账
+  // 加载网点下的产品信息
+  const loadBranchProducts = useCallback(async () => {
+    const branchId = localStorage.getItem('userId');
+    if (!branchId) return;
+    setBranchProductsLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/branch/products?branchId=${branchId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success) {
+        setBranchProducts(data.data || []);
+      }
+    } catch (err) {
+      console.error('加载产品信息失败:', err);
+    } finally {
+      setBranchProductsLoading(false);
+    }
+  }, []);
+
+  // 加载到期未释放产品
+  const loadExpiredProducts = useCallback(async () => {
+    const branchId = localStorage.getItem('userId');
+    if (!branchId) return;
+    setExpiredProductsLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/branch/expired-products?branchId=${branchId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success) {
+        setExpiredProducts(data.data || []);
+      }
+    } catch (err) {
+      console.error('加载到期产品失败:', err);
+    } finally {
+      setExpiredProductsLoading(false);
+    }
+  }, []);
+
+  // 释放单个产品收益
+  const handleReleaseOne = async (upId: string, providerId?: string) => {
+    const token = localStorage.getItem('token');
+    setReleasingIds(prev => new Set(prev).add(upId));
+    try {
+      const res = await fetch('/api/products/release-revenue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ userProductId: upId })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setExpiredProducts(prev => prev.filter((p: any) => p.id !== upId));
+        if (providerId) loadProviderExpired(providerId);
+      } else {
+        alert(data.message || '释放失败');
+      }
+    } catch (err) {
+      alert('释放失败');
+    } finally {
+      setReleasingIds(prev => { const s = new Set(prev); s.delete(upId); return s; });
+    }
+  };
+
+  // 一键释放所有到期产品（可按服务商筛选）
+  const handleReleaseAll = async (providerId?: string) => {
+    const targetList = providerId ? providerExpiredProducts : expiredProducts;
+    if (!confirm(`确认释放 ${targetList.length} 个到期产品的收益？`)) return;
+    setReleaseAllLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/admin/force-release', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ adminKey: 'admin-force-release-2026', providerId })
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(`成功释放 ${data.data?.releasedCount || 0} 个产品的收益`);
+        loadExpiredProducts();
+        if (providerId) loadProviderExpired(providerId);
+      } else {
+        alert(data.message || '释放失败');
+      }
+    } catch (err) {
+      alert('释放失败');
+    } finally {
+      setReleaseAllLoading(false);
+    }
+  };
+
+  // 加载服务商详情-产品列表
+  const loadProviderDetails = async (providerId: string) => {
+    setProviderDetailLoading(true);
+    setProviderDetailTab('products');
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/branch/products?providerId=${providerId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success) {
+        setProviderProducts(data.data || []);
+      }
+    } catch (err) {
+      console.error('加载服务商产品失败:', err);
+    } finally {
+      setProviderDetailLoading(false);
+    }
+  };
+
+  // 加载服务商到期未释放产品
+  const loadProviderExpired = async (providerId: string) => {
+    setProviderExpiredLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/branch/expired-products?providerId=${providerId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success) {
+        setProviderExpiredProducts(data.data || []);
+      }
+    } catch (err) {
+      console.error('加载到期产品失败:', err);
+    } finally {
+      setProviderExpiredLoading(false);
+    }
+  };
+
+  // 服务商详情内一键释放
+  const handleProviderReleaseAll = (providerId: string) => {
+    handleReleaseAll(providerId);
+  };
+
   const loadCapitalFlow = useCallback(async (page = 1) => {
     const branchId = localStorage.getItem('userId');
     if (!branchId) return;
@@ -1765,6 +1920,7 @@ export default function BranchPage() {
               >
                 <ArrowRightLeft className="w-4 h-4" />资金流水
               </button>
+
             </div>
           </div>
 
@@ -2447,29 +2603,214 @@ export default function BranchPage() {
                     </thead>
                     <tbody>
                       {providers.map(provider => (
-                        <tr key={provider.id} className="border-b hover:bg-gray-50">
-                          <td className="py-3 px-4 font-medium">{provider.username}</td>
-                          <td className="py-3 px-4 text-orange-600">{(provider.quota || 0).toLocaleString()}</td>
-                          <td className="py-3 px-4 text-green-600">¥{(provider.balance || 0).toLocaleString()}</td>
-                          <td className="py-3 px-4 text-blue-600">{(provider.used_quota || 0).toLocaleString()}</td>
-                          <td className="py-3 px-4 text-purple-600">{(provider.available_quota || 0).toLocaleString()}</td>
-                          <td className="py-3 px-4">
-                            <Button
-                              size="sm"
-                              className="bg-blue-600"
-                              onClick={() => {
-                                setSelectedProvider(provider.id);
-                                openAllocateDialog();
-                              }}
-                            >
-                              <Send className="w-4 h-4 mr-1" />分配额度
-                            </Button>
-                          </td>
-                        </tr>
+                        <>
+                          <tr key={provider.id} className="border-b hover:bg-gray-50">
+                            <td className="py-3 px-4 font-medium">{provider.username}</td>
+                            <td className="py-3 px-4 text-orange-600">{(provider.quota || 0).toLocaleString()}</td>
+                            <td className="py-3 px-4 text-green-600">¥{(provider.balance || 0).toLocaleString()}</td>
+                            <td className="py-3 px-4 text-blue-600">{(provider.used_quota || 0).toLocaleString()}</td>
+                            <td className="py-3 px-4 text-purple-600">{(provider.available_quota || 0).toLocaleString()}</td>
+                            <td className="py-3 px-4 flex gap-2">
+                              <Button
+                                size="sm"
+                                className="bg-blue-600"
+                                onClick={() => {
+                                  setSelectedProvider(provider.id);
+                                  openAllocateDialog();
+                                }}
+                              >
+                                <Send className="w-4 h-4 mr-1" />分配额度
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  if (expandedProvider === provider.id) {
+                                    setExpandedProvider(null);
+                                  } else {
+                                    setExpandedProvider(provider.id);
+                                    loadProviderDetails(provider.id);
+                                  }
+                                }}
+                              >
+                                {expandedProvider === provider.id ? <ChevronUp className="w-4 h-4 mr-1" /> : <ChevronDown className="w-4 h-4 mr-1" />}
+                                {expandedProvider === provider.id ? '收起' : '详情'}
+                              </Button>
+                            </td>
+                          </tr>
+                          {/* 展开的服务商详情 */}
+                          {expandedProvider === provider.id && (
+                            <tr key={`${provider.id}-detail`}>
+                              <td colSpan={6} className="p-0">
+                                <div className="bg-gray-50 p-4 border-b">
+                                  {/* 子Tab */}
+                                  <div className="flex gap-2 mb-4">
+                                    <Button
+                                      size="sm"
+                                      variant={providerDetailTab === 'products' ? 'default' : 'outline'}
+                                      onClick={() => setProviderDetailTab('products')}
+                                    >
+                                      <Package className="w-3 h-3 mr-1" />产品信息
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant={providerDetailTab === 'release' ? 'default' : 'outline'}
+                                      onClick={() => { setProviderDetailTab('release'); loadProviderExpired(provider.id); }}
+                                    >
+                                      <Zap className="w-3 h-3 mr-1" />到期释放
+                                    </Button>
+                                  </div>
+
+                                  {/* 产品信息 */}
+                                  {providerDetailTab === 'products' && (
+                                    providerDetailLoading ? (
+                                      <div className="text-center py-4 text-gray-400">加载中...</div>
+                                    ) : providerProducts.length === 0 ? (
+                                      <div className="text-center py-4 text-gray-400">暂无产品</div>
+                                    ) : (
+                                      <>
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                                          <div className="bg-white rounded-lg p-2 border text-center">
+                                            <div className="text-xs text-gray-500">产品总数</div>
+                                            <div className="text-lg font-bold text-purple-700">{providerProducts.length}</div>
+                                          </div>
+                                          <div className="bg-white rounded-lg p-2 border text-center">
+                                            <div className="text-xs text-gray-500">在售</div>
+                                            <div className="text-lg font-bold text-green-700">{providerProducts.filter((p: any) => p.status === 'available').length}</div>
+                                          </div>
+                                          <div className="bg-white rounded-lg p-2 border text-center">
+                                            <div className="text-xs text-gray-500">已售</div>
+                                            <div className="text-lg font-bold text-blue-700">{providerProducts.filter((p: any) => p.status === 'sold').length}</div>
+                                          </div>
+                                          <div className="bg-white rounded-lg p-2 border text-center">
+                                            <div className="text-xs text-gray-500">产品总值</div>
+                                            <div className="text-lg font-bold text-orange-700">¥{providerProducts.reduce((s: number, p: any) => s + Number(p.price || 0), 0).toLocaleString()}</div>
+                                          </div>
+                                        </div>
+                                        <table className="w-full text-sm bg-white rounded border">
+                                          <thead>
+                                            <tr className="border-b bg-gray-50">
+                                              <th className="text-left py-2 px-3">编号</th>
+                                              <th className="text-left py-2 px-3">名称</th>
+                                              <th className="text-left py-2 px-3">价格</th>
+                                              <th className="text-left py-2 px-3">周期</th>
+                                              <th className="text-left py-2 px-3">收益率</th>
+                                              <th className="text-left py-2 px-3">状态</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {providerProducts.map((p: any) => (
+                                              <tr key={p.id} className="border-b hover:bg-gray-50">
+                                                <td className="py-2 px-3 font-mono text-xs">{p.code || '-'}</td>
+                                                <td className="py-2 px-3">{p.name || '-'}</td>
+                                                <td className="py-2 px-3 font-semibold">¥{Number(p.price || 0).toLocaleString()}</td>
+                                                <td className="py-2 px-3">{p.period}天</td>
+                                                <td className="py-2 px-3">{p.total_rate}%</td>
+                                                <td className="py-2 px-3">
+                                                  <Badge className={
+                                                    p.status === 'available' ? 'bg-green-100 text-green-700' :
+                                                    p.status === 'sold' ? 'bg-blue-100 text-blue-700' :
+                                                    'bg-gray-100 text-gray-700'
+                                                  }>
+                                                    {p.status === 'available' ? '在售' : p.status === 'sold' ? '已售' : p.status}
+                                                  </Badge>
+                                                </td>
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </>
+                                    )
+                                  )}
+
+                                  {/* 到期释放 */}
+                                  {providerDetailTab === 'release' && (
+                                    <>
+                                      {/* 释放规则说明 */}
+                                      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3">
+                                        <p className="text-sm text-amber-700">产品到期后，按产品价值的<b>5%</b>作为智算金释放：会员2% | 服务商2% | 直推0.25% | 上级服务商0.25% | 服务网点0.1% | 公司运营0.4%</p>
+                                      </div>
+                                      {providerExpiredLoading ? (
+                                        <div className="text-center py-4 text-gray-400">加载中...</div>
+                                      ) : providerExpiredProducts.length === 0 ? (
+                                        <div className="text-center py-4 text-gray-400">暂无到期未释放的产品</div>
+                                      ) : (
+                                        <>
+                                          <div className="flex items-center gap-2 mb-3">
+                                            <Button
+                                              size="sm"
+                                              className="bg-amber-500 hover:bg-amber-600 text-white"
+                                              onClick={() => handleProviderReleaseAll(provider.id)}
+                                              disabled={releaseAllLoading}
+                                            >
+                                              {releaseAllLoading ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Zap className="w-3 h-3 mr-1" />}
+                                              一键释放（{providerExpiredProducts.length}个）
+                                            </Button>
+                                            <Button size="sm" variant="outline" onClick={() => loadProviderExpired(provider.id)}>
+                                              <RefreshCw className="w-3 h-3 mr-1" />刷新
+                                            </Button>
+                                          </div>
+                                          <table className="w-full text-sm bg-white rounded border">
+                                            <thead>
+                                              <tr className="border-b bg-gray-50">
+                                                <th className="text-left py-2 px-3">产品</th>
+                                                <th className="text-left py-2 px-3">编号</th>
+                                                <th className="text-left py-2 px-3">价格</th>
+                                                <th className="text-left py-2 px-3">周期</th>
+                                                <th className="text-left py-2 px-3">到期时间</th>
+                                                <th className="text-left py-2 px-3">5%智算金</th>
+                                                <th className="text-left py-2 px-3">会员2%</th>
+                                                <th className="text-left py-2 px-3">服务商2%</th>
+                                                <th className="text-left py-2 px-3">持有人</th>
+                                                <th className="text-left py-2 px-3">操作</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {providerExpiredProducts.map((p: any) => {
+                                                const price = Number(p.purchase_price || p.price || 0);
+                                                const total5pct = price * 0.05;
+                                                const memberShare = price * 0.02;
+                                                const provShare = price * 0.02;
+                                                return (
+                                                  <tr key={p.id} className="border-b hover:bg-gray-50">
+                                                    <td className="py-2 px-3">{p.product_name || p.name || '-'}</td>
+                                                    <td className="py-2 px-3 font-mono text-xs">{p.product_code || p.code || '-'}</td>
+                                                    <td className="py-2 px-3 font-semibold">¥{price.toLocaleString()}</td>
+                                                    <td className="py-2 px-3">{p.period}天</td>
+                                                    <td className="py-2 px-3 text-xs text-red-500">{p.expire_date?.substring(0, 16)?.replace('T', ' ')}</td>
+                                                    <td className="py-2 px-3 font-semibold text-amber-600">¥{total5pct.toFixed(2)}</td>
+                                                    <td className="py-2 px-3 text-blue-600">¥{memberShare.toFixed(2)}</td>
+                                                    <td className="py-2 px-3 text-purple-600">¥{provShare.toFixed(2)}</td>
+                                                    <td className="py-2 px-3 text-xs">{p.member_name || '-'}</td>
+                                                    <td className="py-2 px-3">
+                                                      <Button
+                                                        size="sm"
+                                                        onClick={() => handleReleaseOne(p.id, provider.id)}
+                                                        disabled={releasingIds.has(p.id)}
+                                                        className="bg-amber-500 hover:bg-amber-600 text-white text-xs"
+                                                      >
+                                                        {releasingIds.has(p.id) ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Zap className="w-3 h-3 mr-1" />}
+                                                        释放
+                                                      </Button>
+                                                    </td>
+                                                  </tr>
+                                                );
+                                              })}
+                                            </tbody>
+                                          </table>
+                                        </>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </>
                       ))}
                       {providers.length === 0 && (
                         <tr>
-                          <td colSpan={4} className="py-8 text-center text-gray-500">
+                          <td colSpan={6} className="py-8 text-center text-gray-500">
                             暂无服务商
                           </td>
                         </tr>

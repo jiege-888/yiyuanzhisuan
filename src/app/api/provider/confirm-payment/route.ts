@@ -130,88 +130,10 @@ export async function POST(request: NextRequest) {
         updated_at: new Date().toISOString(),
       }).eq('id', order.product_id);
 
-      // ========== 总台释放5%收益，购买时只分配3%（会员2%延迟到卖出时到账） ==========
-      const releaseAmount = price * 0.05;
+      // 收益分配已移至到期释放时统一分配（5%智算金按比例释放给各角色）
 
-      const memberShare = Math.round(price * 0.02 * 100) / 100; // 延迟到卖出时
-      const directReward = Math.round(price * 0.0025 * 100) / 100;
-      const providerShare = Math.round(price * 0.02 * 100) / 100;
-      const parentShare = Math.round(price * 0.0025 * 100) / 100;
-      const branchShare = Math.round(price * 0.001 * 100) / 100;
-      const companyBaseShare = Math.round(price * 0.004 * 100) / 100;
-
-      // 获取会员信息
-      const member = await queryOne('SELECT id, inviter_id, provider_id, username FROM users WHERE id = $1', [order.user_id]);
-
-      // 1. 会员2% → 延迟到卖出/流转时到账，购买时不发放
-
-      // 2. 直推人0.25% → balance
-      let directRewardTo: string | null = null;
-      if (directReward > 0 && member?.inviter_id) {
-        const inviter = await queryOne('SELECT id FROM users WHERE id = $1', [member.inviter_id]);
-        if (inviter) {
-          directRewardTo = inviter.id;
-          await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [directReward, inviter.id]);
-        }
-      }
-
-      // 3. 服务商2% → balance
-      if (providerShare > 0) {
-        await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [providerShare, providerId]);
-      }
-
-      // 4. 下级服务商0.25% → balance
-      const providerInfo = await queryOne('SELECT branch_id, parent_provider_id FROM providers WHERE user_id = $1', [providerId]);
-      let actualParentProviderId: string | null = null;
-      if (providerInfo?.parent_provider_id && parentShare > 0) {
-        const parentProvider = await queryOne('SELECT user_id FROM providers WHERE id = $1', [providerInfo.parent_provider_id]);
-        if (parentProvider?.user_id) {
-          actualParentProviderId = providerInfo.parent_provider_id;
-          await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [parentShare, parentProvider.user_id]);
-        }
-      }
-
-      // 5. 服务网点0.1%（+无上级时的0.25%归网点）→ balance
-      let distributionBranchId: string | null = providerInfo?.branch_id || null;
-      const noParentExtra = actualParentProviderId ? 0 : parentShare;
-      const branchTotalShare = branchShare + noParentExtra;
-      if (providerInfo?.branch_id && branchTotalShare > 0) {
-        await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [branchTotalShare, providerInfo.branch_id]);
-      }
-
-      // 6. 总台运营0.4% → balance
-      if (companyBaseShare > 0) {
-        const adminUser = await queryOne("SELECT id FROM users WHERE role = 'admin' LIMIT 1");
-        if (adminUser) {
-          await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [companyBaseShare, adminUser.id]);
-        }
-      }
-
-      // 记录释放收益
-      try {
-        await execute(
-          `INSERT INTO release_records 
-           (product_id, product_name, product_price, release_amount, release_rate,
-            member_id, member_name, member_share,
-            direct_referral_id, direct_referral_share,
-            provider_id, provider_share,
-            parent_provider_id, parent_provider_share,
-            senior_provider_id, senior_provider_share,
-            branch_id, branch_share, company_share)
-           VALUES ($1, $2, $3, $4, 0.05, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
-          [
-            product.id, productName, price, releaseAmount,
-            order.user_id, member?.username || order.user_id, memberShare,
-            directRewardTo, directReward,
-            providerId, providerShare,
-            actualParentProviderId, actualParentProviderId ? parentShare : 0,
-            null, 0,
-            distributionBranchId, branchShare, companyBaseShare
-          ]
-        );
-      } catch (e) {
-        console.error('记录释放收益失败:', e);
-      }
+      // 获取会员信息（流转记录和保护期需要）
+      const member = await queryOne('SELECT id, inviter_id, provider_id, username, unique_id, phone FROM users WHERE id = $1', [order.user_id]);
 
       // 首次购买也写入流转记录（服务商→会员）
       try {

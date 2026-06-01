@@ -2,13 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { query, queryOne, execute } from '@/lib/supabase-client';
 import { authenticateRequest } from '@/lib/auth';
 
-// 会员出售产品 - 到期解锁后可卖出流转（收益已自动到账，卖出只是流转产品）
+// 会员卖出产品
 export async function POST(request: NextRequest) {
   try {
     const user = authenticateRequest(request);
-    if (!user) {
-      return NextResponse.json({ success: false, message: '无效token' }, { status: 401 });
-    }
+    if (!user) return NextResponse.json({ error: '未登录' }, { status: 401 });
 
     const body = await request.json();
     const { userId, userProductId } = body;
@@ -17,35 +15,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '缺少必要参数' }, { status: 400 });
     }
 
-    // 验证操作权限
-    if (user.role !== 'admin' && user.userId !== userId) {
-      return NextResponse.json({ error: '无权操作' }, { status: 403 });
-    }
+    const dbUser = await queryOne<any>('SELECT * FROM users WHERE id = $1', [userId]);
+    if (!dbUser) return NextResponse.json({ error: '用户不存在' }, { status: 404 });
 
-    // 查询用户信息
-    const dbUser = await queryOne<any>(
-      'SELECT id, username, provider_id, phone, real_name FROM users WHERE id = $1',
-      [userId]
-    );
-    if (!dbUser) {
-      return NextResponse.json({ error: '用户不存在' }, { status: 404 });
-    }
-
-    // 查询用户产品
     const userProduct = await queryOne<any>(
-      'SELECT * FROM user_products WHERE id = $1',
-      [userProductId]
+      'SELECT * FROM user_products WHERE id = $1 AND user_id = $2',
+      [userProductId, userId]
     );
-    if (!userProduct) {
-      return NextResponse.json({ error: '产品不存在' }, { status: 404 });
-    }
-
-    // 验证归属
-    if (userProduct.user_id !== userId) {
-      return NextResponse.json({ error: '无权操作此产品' }, { status: 403 });
-    }
-
-    // 验证状态
+    if (!userProduct) return NextResponse.json({ error: '持仓不存在' }, { status: 404 });
     if (userProduct.status !== 'holding') {
       return NextResponse.json({ error: '产品状态不允许出售' }, { status: 400 });
     }
@@ -77,36 +54,81 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // 如果收益尚未释放，自动释放（兜底逻辑，正常情况到期时已自动释放）
+    // 如果收益尚未释放，自动释放5%智算金给所有角色（兜底逻辑）
     if (!userProduct.revenue_released) {
-      const profitRate = parseFloat(product?.profit_rate || userProduct.profit_rate || 0);
-      const memberProfit = parseFloat(userProduct.purchase_price) * (profitRate / 100);
+      const purchasePrice = parseFloat(userProduct.purchase_price);
 
-      // 会员收益到账 → balance（不是energy_value）
-      // 市场费在购买时已经分配给各角色（balance），这里不再重复分配
+      // 5%智算金分配
+      const memberShare = Math.round(purchasePrice * 0.02 * 100) / 100;
+      const providerShare = Math.round(purchasePrice * 0.02 * 100) / 100;
+      const directReward = Math.round(purchasePrice * 0.0025 * 100) / 100;
+      const parentShare = Math.round(purchasePrice * 0.0025 * 100) / 100;
+      const branchShare = Math.round(purchasePrice * 0.001 * 100) / 100;
+      const companyShare = Math.round(purchasePrice * 0.004 * 100) / 100;
+
+      // 1. 会员 2% → balance
       await execute(
         `UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2`,
-        [memberProfit, userId]
+        [memberShare, userId]
       );
+
+      // 2. 直推人 0.25%
+      const member = await queryOne('SELECT inviter_id FROM users WHERE id = $1', [userId]);
+      if (directReward > 0 && member?.inviter_id) {
+        await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [directReward, member.inviter_id]);
+      }
+
+      // 3. 服务商 2%
+      const providerId = product?.provider_id || userProduct.seller_id;
+      if (providerShare > 0 && providerId) {
+        await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [providerShare, providerId]);
+      }
+
+      // 4. 上级服务商 0.25%（无上级时归网点）
+      const providerInfo = await queryOne('SELECT branch_id, parent_provider_id FROM providers WHERE user_id = $1', [providerId]);
+      let actualParentProviderId: string | null = null;
+      if (providerInfo?.parent_provider_id && parentShare > 0) {
+        const parentProvider = await queryOne('SELECT user_id FROM providers WHERE id = $1', [providerInfo.parent_provider_id]);
+        if (parentProvider?.user_id) {
+          actualParentProviderId = providerInfo.parent_provider_id;
+          await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [parentShare, parentProvider.user_id]);
+        }
+      }
+
+      // 5. 服务网点 0.1%（+无上级时0.25%）
+      const noParentExtra = actualParentProviderId ? 0 : parentShare;
+      const branchTotalShare = branchShare + noParentExtra;
+      if (providerInfo?.branch_id && branchTotalShare > 0) {
+        await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [branchTotalShare, providerInfo.branch_id]);
+      }
+
+      // 6. 公司运营 0.4%
+      if (companyShare > 0) {
+        const adminUser = await queryOne("SELECT id FROM users WHERE role = 'admin' LIMIT 1");
+        if (adminUser) {
+          await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [companyShare, adminUser.id]);
+        }
+      }
+
+      // 写入energy_transactions
       await execute(
         `INSERT INTO energy_transactions (user_id, type, amount, note, created_at)
          VALUES ($1, 'profit_release', $2, $3, NOW())`,
-        [userId, memberProfit,
-         `产品「${product?.name || '未知产品'}」到期释放收益${profitRate}%`]
+        [userId, memberShare, `产品「${product?.name || '未知产品'}」到期释放智算金：会员2%¥${memberShare}`]
       );
 
       // 记录member_revenue
       const holdingHours = (now.getTime() - new Date(userProduct.purchase_date).getTime()) / (1000 * 60 * 60);
       const holdingDays = Math.max(1, Math.floor(holdingHours / 24));
       const totalRate = parseFloat(product?.total_rate || 0);
+      const profitRate = parseFloat(product?.profit_rate || 0);
       const marketRate = parseFloat(product?.market_rate || 0);
       await execute(
         `INSERT INTO member_revenue 
          (user_id, user_product_id, principal, profit, total_amount, converted_to_energy, status, product_name, product_code, product_period, total_rate, profit_rate, market_rate, holding_days)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
-        [userId, userProductId, parseFloat(userProduct.purchase_price), memberProfit,
-         parseFloat(userProduct.purchase_price) + memberProfit, 0, 'available',
-         product?.name || '未知产品', product?.code || '', product?.period || 1,
+        [userId, userProductId, purchasePrice, memberShare, purchasePrice + memberShare,
+         0, 'available', product?.name || '未知产品', product?.code || '', product?.period || 1,
          totalRate, profitRate, marketRate, holdingDays]
       );
 
@@ -118,7 +140,6 @@ export async function POST(request: NextRequest) {
     }
 
     const purchasePrice = parseFloat(userProduct.purchase_price);
-    const expectedProfit = parseFloat(userProduct.expected_profit || 0);
 
     // 创建卖出订单
     const orderResult = await query(
@@ -150,8 +171,8 @@ export async function POST(request: NextRequest) {
         receiver_id: dbUser.provider_id,
         receiver_role: 'provider',
         type: 'sell_request',
-        title: '会员出售产品待匹配',
-        content: `${dbUser.username} 出售产品 ${product?.name}，Token值¥${purchasePrice}，请匹配给新会员`,
+        title: '会员卖出申请',
+        content: `会员 ${dbUser.username} 申请卖出产品 ${product?.name || '未知产品'}，Token值¥${purchasePrice}`,
         is_read: false
       });
     }
@@ -159,17 +180,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       data: {
-        order: orderResult[0],
-        profitCredited: expectedProfit,
-        principalPending: purchasePrice,
-        message: `出售成功！收益¥${expectedProfit.toFixed(2)}已到账智算金，Token值¥${purchasePrice.toFixed(2)}待匹配成功后由新持有人线下支付`,
-      },
+        order: orderResult?.[0] || null,
+        message: '卖出申请已提交，5%智算金已释放到各角色账户',
+      }
     });
-  } catch (error) {
-    console.error('出售产品失败:', error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : '出售产品失败' },
-      { status: 500 }
-    );
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : '未知错误';
+    console.error('[SELL] 卖出失败:', error);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

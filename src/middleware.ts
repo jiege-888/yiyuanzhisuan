@@ -138,6 +138,8 @@ const PUBLIC_PATHS = [
   '/api/points-products',
   '/api/points-exchange',
   '/api/admin/force-release',
+  '/api/branch/products',
+  '/api/branch/expired-products',
   '/api/points-exchange/orders',
   '/api/products/repurchase',
   '/api/product-templates',
