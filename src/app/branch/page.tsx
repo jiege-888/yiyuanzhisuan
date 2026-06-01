@@ -1524,6 +1524,7 @@ export default function BranchPage() {
   }, [capitalFlowTab]);
 
   useEffect(() => { if (activeTab === 'capitalFlow') loadCapitalFlow(capitalFlowPage); }, [activeTab, capitalFlowTab, capitalFlowPage, loadCapitalFlow]);
+  useEffect(() => { if (activeTab === 'revenue') loadBranchRevenueRecords(); }, [activeTab]);
 
   // 智算金互转 - 搜索用户
   const handleTransferSearch = async () => {
@@ -3333,7 +3334,7 @@ export default function BranchPage() {
               </Card>
 
               {/* 收益统计卡片 */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                 <Card className="bg-gradient-to-br from-green-500 to-emerald-600 text-white">
                   <CardContent className="pt-4">
                     <div className="flex items-center gap-2 mb-2">
@@ -3343,34 +3344,81 @@ export default function BranchPage() {
                     <p className="text-2xl font-bold">¥{Number(user?.energy_value || 0).toLocaleString()}</p>
                   </CardContent>
                 </Card>
-                <Card className="bg-gradient-to-br from-blue-500 to-blue-600 text-white">
+                <Card className="bg-gradient-to-br from-amber-500 to-amber-600 text-white">
                   <CardContent className="pt-4">
                     <div className="flex items-center gap-2 mb-2">
-                      <Users className="w-5 h-5" />
-                      <span className="text-sm opacity-80">会员提现收益</span>
+                      <DollarSign className="w-5 h-5" />
+                      <span className="text-sm opacity-80">总收益</span>
                     </div>
-                    <p className="text-2xl font-bold">¥{Number(branchRevenueStats.memberWithdraw || 0).toLocaleString()}</p>
-                  </CardContent>
-                </Card>
-                <Card className="bg-gradient-to-br from-purple-500 to-purple-600 text-white">
-                  <CardContent className="pt-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Building2 className="w-5 h-5" />
-                      <span className="text-sm opacity-80">服务商提现收益</span>
-                    </div>
-                    <p className="text-2xl font-bold">¥{Number(branchRevenueStats.providerWithdraw || 0).toLocaleString()}</p>
+                    <p className="text-2xl font-bold">¥{Number(branchRevenueStats.totalRevenue || 0).toLocaleString()}</p>
                   </CardContent>
                 </Card>
                 <Card className="bg-gradient-to-br from-orange-500 to-orange-600 text-white">
                   <CardContent className="pt-4">
                     <div className="flex items-center gap-2 mb-2">
                       <DollarSign className="w-5 h-5" />
-                      <span className="text-sm opacity-80">市场费分润</span>
+                      <span className="text-sm opacity-80">市场费分润(0.1%)</span>
                     </div>
                     <p className="text-2xl font-bold">¥{Number(branchRevenueStats.marketFeeShare || 0).toLocaleString()}</p>
                   </CardContent>
                 </Card>
+                <Card className="bg-gradient-to-br from-pink-500 to-pink-600 text-white">
+                  <CardContent className="pt-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Building2 className="w-5 h-5" />
+                      <span className="text-sm opacity-80">上级份额归网点(0.25%)</span>
+                    </div>
+                    <p className="text-2xl font-bold">¥{Number(branchRevenueStats.providerUpstream || 0).toLocaleString()}</p>
+                  </CardContent>
+                </Card>
+                <Card className="bg-gradient-to-br from-blue-500 to-blue-600 text-white">
+                  <CardContent className="pt-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Users className="w-5 h-5" />
+                      <span className="text-sm opacity-80">提现手续费</span>
+                    </div>
+                    <p className="text-2xl font-bold">¥{Number(branchRevenueStats.memberWithdraw || 0).toLocaleString()}</p>
+                  </CardContent>
+                </Card>
               </div>
+
+              {/* 操作区 */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>5%市场费分配规则</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-3 md:grid-cols-6 gap-3 text-center text-sm">
+                    <div className="bg-blue-50 dark:bg-blue-900/30 p-2 rounded-lg">
+                      <div className="text-xs text-muted-foreground">会员</div>
+                      <div className="text-lg font-bold text-blue-600">2%</div>
+                    </div>
+                    <div className="bg-green-50 dark:bg-green-900/30 p-2 rounded-lg">
+                      <div className="text-xs text-muted-foreground">服务商</div>
+                      <div className="text-lg font-bold text-green-600">2%</div>
+                    </div>
+                    <div className="bg-orange-50 dark:bg-orange-900/30 p-2 rounded-lg">
+                      <div className="text-xs text-muted-foreground">直推</div>
+                      <div className="text-lg font-bold text-orange-600">0.25%</div>
+                    </div>
+                    <div className="bg-pink-50 dark:bg-pink-900/30 p-2 rounded-lg">
+                      <div className="text-xs text-muted-foreground">上级服务商</div>
+                      <div className="text-lg font-bold text-pink-600">0.25%</div>
+                    </div>
+                    <div className="bg-cyan-50 dark:bg-cyan-900/30 p-2 rounded-lg">
+                      <div className="text-xs text-muted-foreground">网点</div>
+                      <div className="text-lg font-bold text-cyan-600">0.1%</div>
+                    </div>
+                    <div className="bg-amber-50 dark:bg-amber-900/30 p-2 rounded-lg">
+                      <div className="text-xs text-muted-foreground">公司运营</div>
+                      <div className="text-lg font-bold text-amber-600">0.4%</div>
+                    </div>
+                  </div>
+                  <div className="mt-2 text-xs text-muted-foreground space-y-0.5">
+                    <p>* 网点获得市场费0.1%分成 + 无上级服务商时0.25%归网点</p>
+                  </div>
+                </CardContent>
+              </Card>
 
               {/* 操作区 */}
               <Card>
@@ -4106,6 +4154,11 @@ export default function BranchPage() {
                   value={branchWithdrawRealName}
                   onChange={(e) => setBranchWithdrawRealName(e.target.value)}
                 />
+              </div>
+              <div className="bg-amber-50 border border-amber-200 p-4 rounded-lg">
+                <p className="text-sm font-medium text-amber-800 mb-1">智算中心到账账号</p>
+                <p className="text-sm text-amber-700">账号：艺元智算管理员 [HM000001]</p>
+                <p className="text-xs text-amber-600 mt-1">提现审核通过后，资金将转入智算中心账号</p>
               </div>
               <div className="bg-gray-50 p-3 rounded-lg text-sm text-gray-600">
                 <p>• 最低提现金额: ¥100</p>

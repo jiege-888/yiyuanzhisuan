@@ -244,6 +244,7 @@ export default function AdminPage() {
   const [feeRecords, setFeeRecords] = useState<any[]>([]);
   const [feeRecordsLoading, setFeeRecordsLoading] = useState(false);
   const [feeStats, setFeeStats] = useState<any>(null);
+  const [revenueSummary, setRevenueSummary] = useState<any>(null);
 
   // 账户管理相关state
   const [accountsData, setAccountsData] = useState<any>(null);
@@ -894,6 +895,7 @@ export default function AdminPage() {
     if (activeMenu === 'release') {
       loadReleaseRecords();
       loadFeeRecords();
+      loadRevenueSummary();
     }
     if (activeMenu === 'dashboard') {
       loadDashboardData();
@@ -4422,16 +4424,26 @@ export default function AdminPage() {
         {financeSubTab === 'revenue-account' && (() => {
           const adminBalance = adminAccount ? Number(adminAccount.balance || 0) : 0;
           const adminPoints = adminAccount ? Number(adminAccount.points || 0) : 0;
-          const withdrawFeeTotal = feeRecords.filter((r: any) => r.type === 'withdrawal_fee').reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
-          const marketOpsTotal = feeRecords.filter((r: any) => r.type === 'market_fee_ops').reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
+          const adminEnergyValue = adminAccount ? Number(adminAccount.energy_value || 0) : 0;
+          const withdrawFeeTotal = feeRecords.filter((r: any) => r.type === 'withdrawal_fee' || r.fee_type === 'withdrawal_fee').reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
+          const marketOpsTotal = feeRecords.filter((r: any) => r.type === 'market_fee_ops' || r.fee_type === 'market_fee_ops').reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
 
           return (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {/* 账号卡片 */}
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                 <Card className="bg-gradient-to-br from-amber-500 to-amber-700 text-white">
                   <CardContent className="p-4">
-                    <div className="text-sm opacity-80">智算中心智算金余额</div>
+                    <div className="text-sm opacity-80">运营账号余额</div>
                     <div className="text-3xl font-bold mt-1">¥{adminBalance.toLocaleString()}</div>
+                    <div className="text-xs opacity-70 mt-1">提现手续费 + 公司运营沉淀</div>
+                  </CardContent>
+                </Card>
+                <Card className="bg-gradient-to-br from-cyan-500 to-cyan-700 text-white">
+                  <CardContent className="p-4">
+                    <div className="text-sm opacity-80">智算金账号余额</div>
+                    <div className="text-3xl font-bold mt-1">¥{adminEnergyValue.toLocaleString()}</div>
+                    <div className="text-xs opacity-70 mt-1">公司分成0.4%(energy_value)</div>
                   </CardContent>
                 </Card>
                 <Card className="bg-gradient-to-br from-blue-500 to-blue-700 text-white">
@@ -4444,6 +4456,7 @@ export default function AdminPage() {
                   <CardContent className="p-4">
                     <div className="text-sm opacity-80">市场费运营沉淀</div>
                     <div className="text-3xl font-bold mt-1">¥{marketOpsTotal.toLocaleString()}</div>
+                    <div className="text-xs opacity-70 mt-1">公司分成0.4%</div>
                   </CardContent>
                 </Card>
                 <Card className="bg-gradient-to-br from-purple-500 to-purple-700 text-white">
@@ -4453,6 +4466,83 @@ export default function AdminPage() {
                   </CardContent>
                 </Card>
               </div>
+
+              {/* 5%分配规则说明 */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>5%市场费分配规则</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-3 md:grid-cols-6 gap-3 text-center">
+                    <div className="bg-blue-50 dark:bg-blue-900/30 p-3 rounded-lg">
+                      <div className="text-xs text-muted-foreground">会员收益</div>
+                      <div className="text-lg font-bold text-blue-600">2%</div>
+                    </div>
+                    <div className="bg-green-50 dark:bg-green-900/30 p-3 rounded-lg">
+                      <div className="text-xs text-muted-foreground">服务商分成</div>
+                      <div className="text-lg font-bold text-green-600">2%</div>
+                    </div>
+                    <div className="bg-orange-50 dark:bg-orange-900/30 p-3 rounded-lg">
+                      <div className="text-xs text-muted-foreground">直推奖励</div>
+                      <div className="text-lg font-bold text-orange-600">0.25%</div>
+                    </div>
+                    <div className="bg-pink-50 dark:bg-pink-900/30 p-3 rounded-lg">
+                      <div className="text-xs text-muted-foreground">上级服务商</div>
+                      <div className="text-lg font-bold text-pink-600">0.25%</div>
+                    </div>
+                    <div className="bg-cyan-50 dark:bg-cyan-900/30 p-3 rounded-lg">
+                      <div className="text-xs text-muted-foreground">网点分成</div>
+                      <div className="text-lg font-bold text-cyan-600">0.1%</div>
+                    </div>
+                    <div className="bg-amber-50 dark:bg-amber-900/30 p-3 rounded-lg">
+                      <div className="text-xs text-muted-foreground">公司运营</div>
+                      <div className="text-lg font-bold text-amber-600">0.4%</div>
+                    </div>
+                  </div>
+                  <div className="mt-3 text-xs text-muted-foreground space-y-1">
+                    <p>* 无直推人或直推人是服务商时，直推0.25%奖励归服务商</p>
+                    <p>* 无上级服务商时，上级服务商0.25%奖励归网点</p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* 5%分配汇总统计 */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>5%分配汇总统计</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {revenueSummary ? (
+                    <>
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                        {revenueSummary.summary?.map((s: any) => {
+                          const colorMap: Record<string, string> = {
+                            member_profit: 'text-blue-600',
+                            provider_share: 'text-green-600',
+                            direct_reward: 'text-orange-600',
+                            parent_provider_share: 'text-pink-600',
+                            branch_share: 'text-cyan-600',
+                            company_share: 'text-amber-600',
+                          };
+                          return (
+                            <div key={s.type} className="border rounded-lg p-3">
+                              <div className="text-sm text-muted-foreground">{s.label}({s.rate})</div>
+                              <div className={`text-xl font-bold ${colorMap[s.type] || 'text-gray-600'}`}>¥{Number(s.total_amount).toLocaleString()}</div>
+                              <div className="text-xs text-muted-foreground">{s.record_count}笔</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="mt-3 pt-3 border-t flex justify-between items-center">
+                        <span className="text-sm text-muted-foreground">分配总额</span>
+                        <span className="text-xl font-bold">¥{Number(revenueSummary.totalAmount || 0).toLocaleString()}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-gray-500 text-center py-4">加载中...</p>
+                  )}
+                </CardContent>
+              </Card>
 
               <Card>
                 <CardHeader>
@@ -4466,7 +4556,7 @@ export default function AdminPage() {
                           <TableHead>时间</TableHead>
                           <TableHead>来源类型</TableHead>
                           <TableHead>金额</TableHead>
-                          <TableHead>来源角色</TableHead>
+                          <TableHead>费率</TableHead>
                           <TableHead>说明</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -4475,14 +4565,12 @@ export default function AdminPage() {
                           <TableRow key={r.id}>
                             <TableCell className="text-sm">{r.created_at ? new Date(r.created_at).toLocaleString() : '-'}</TableCell>
                             <TableCell>
-                              <Badge variant="outline" className={r.type === 'withdrawal_fee' ? 'border-blue-300 text-blue-600' : r.type === 'market_fee_ops' ? 'border-green-300 text-green-600' : 'border-gray-300'}>
-                                {r.type === 'withdrawal_fee' ? '提现手续费' : r.type === 'market_fee_ops' ? '市场费运营' : r.type === 'admin_transfer_in' ? '智算金转入' : r.type}
+                              <Badge variant="outline" className={r.type === 'withdrawal_fee' ? 'border-blue-300 text-blue-600' : r.type === 'market_fee_ops' ? 'border-green-300 text-green-600' : r.type === 'admin_transfer_in' ? 'border-cyan-300 text-cyan-600' : r.type === 'energy_withdrawal_fee' ? 'border-purple-300 text-purple-600' : 'border-gray-300'}>
+                                {r.type === 'withdrawal_fee' ? '提现手续费' : r.type === 'market_fee_ops' ? '公司运营分成' : r.type === 'admin_transfer_in' ? '智算金转入' : r.type === 'energy_withdrawal_fee' ? '能量值提现手续费' : r.type}
                               </Badge>
                             </TableCell>
                             <TableCell className="text-green-600 font-medium">+¥{Number(r.amount).toLocaleString()}</TableCell>
-                            <TableCell>
-                              {r.source_role === 'member' ? '会员' : r.source_role === 'provider' ? '服务商' : r.source_role === 'branch' ? '服务网点' : r.source_role || '-'}
-                            </TableCell>
+                            <TableCell className="text-sm">{r.fee_rate ? (Number(r.fee_rate) * 100) + '%' : '-'}</TableCell>
                             <TableCell className="text-sm text-gray-500 max-w-xs truncate">{r.note || '-'}</TableCell>
                           </TableRow>
                         ))}
@@ -4773,6 +4861,18 @@ export default function AdminPage() {
       console.error('加载手续费沉淀记录失败', e);
     } finally {
       setFeeRecordsLoading(false);
+    }
+  };
+
+  const loadRevenueSummary = async () => {
+    try {
+      const res = await fetch('/api/admin/revenue-summary');
+      const data = await res.json();
+      if (data.success) {
+        setRevenueSummary(data.data || null);
+      }
+    } catch (e) {
+      console.error('加载5%分配汇总失败', e);
     }
   };
 

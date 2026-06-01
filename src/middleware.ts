@@ -89,6 +89,7 @@ const PUBLIC_PATHS = [
   '/api/admin/revenue-stats',
   '/api/admin/fee-records',
   '/api/admin/fee-stats',
+  '/api/admin/revenue-summary',
   '/api/admin/withdraw-review',
   '/api/admin/transfer-balance',
   '/api/admin/migrate-unique-ids',

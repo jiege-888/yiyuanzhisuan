@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
     if (role === 'branch') {
       const { data: branches, error } = await client
         .from('users')
-        .select('id, username, real_name, phone, unique_id, role, balance, points, is_active, created_at, branch_id')
+        .select('id, username, real_name, phone, unique_id, role, balance, energy_value, points, is_active, created_at, branch_id')
         .eq('role', 'branch')
         .order('created_at', { ascending: false });
 
@@ -74,7 +74,7 @@ export async function GET(request: NextRequest) {
       const providersWithStats = await Promise.all((providers || []).map(async (p: any) => {
         const { data: user } = await client
           .from('users')
-          .select('id, username, real_name, phone, unique_id, role, balance, points, is_active, created_at, inviter_id')
+          .select('id, username, real_name, phone, unique_id, role, balance, energy_value, points, is_active, created_at, inviter_id')
           .eq('id', p.user_id)
           .single();
 
@@ -110,7 +110,7 @@ export async function GET(request: NextRequest) {
     if (role === 'member') {
       let memberQuery = client
         .from('users')
-        .select('id, username, real_name, phone, unique_id, role, balance, points, is_active, created_at, provider_id, inviter_id')
+        .select('id, username, real_name, phone, unique_id, role, balance, energy_value, points, is_active, created_at, provider_id, inviter_id')
         .eq('role', 'member')
         .order('created_at', { ascending: false });
 
@@ -160,7 +160,7 @@ export async function GET(request: NextRequest) {
     // 查询所有用户
     const { data: allUsers, error: usersError } = await client
       .from('users')
-      .select('id, username, real_name, phone, unique_id, role, balance, points, is_active, created_at, provider_id, branch_id, inviter_id')
+      .select('id, username, real_name, phone, unique_id, role, balance, points, energy_value, is_active, created_at, provider_id, branch_id, inviter_id')
       .order('created_at', { ascending: false });
 
     if (usersError) throw usersError;
