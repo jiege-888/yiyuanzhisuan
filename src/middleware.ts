@@ -142,6 +142,7 @@ const PUBLIC_PATHS = [
   '/api/branch/expired-products',
   '/api/branch/unlock',
   '/api/branch/force-sell',
+  '/api/branch/retroactive-distribute',
   '/api/points-exchange/orders',
   '/api/products/repurchase',
   '/api/product-templates',

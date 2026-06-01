@@ -42,19 +42,30 @@ export async function POST(request: Request) {
     const sb = getSupabaseClient();
 
     // 1. 获取待解锁的持仓记录
+    // 支持"补发"模式：已解锁但没分配记录的产品也会重新分配收益
     const { data: userProducts, error: upErr } = await sb
       .from('user_products')
       .select('id, user_id, product_id, purchase_price, expected_profit, market_fee, revenue_released, status')
-      .in('id', userProductIds)
-      .eq('revenue_released', false);
+      .in('id', userProductIds);
 
     if (upErr || !userProducts || userProducts.length === 0) {
       return NextResponse.json({ success: false, message: '未找到可解锁的产品' }, { status: 404 });
     }
 
-    const productIds = userProducts.map((up: { product_id: string }) => up.product_id);
+    // 2. 检查哪些产品已有分配记录（避免重复分配）
+    const { data: existingRecords } = await sb
+      .from('release_records')
+      .select('user_product_id')
+      .in('user_product_id', userProductIds);
+
+    const releasedSet = new Set((existingRecords || []).map((r: { user_product_id: string }) => r.user_product_id));
+
+    // 过滤出需要分配收益的产品（未分配过的）
+    const toDistribute = userProducts.filter((up: { id: string }) => !releasedSet.has(up.id));
+
+    const productIds = toDistribute.map((up: { product_id: string }) => up.product_id);
     
-    // 2. 获取产品信息
+    // 3. 获取产品信息
     const { data: products } = await sb
       .from('products')
       .select('id, name, price, period, total_rate, market_rate, profit_rate, provider_id')
@@ -66,7 +77,7 @@ export async function POST(request: Request) {
     const userIds = new Set<string>();
     const providerIds = new Set<string>();
     
-    for (const up of userProducts) {
+    for (const up of toDistribute) {
       userIds.add(up.user_id);
       const product = productMap.get(up.product_id);
       if (product?.provider_id) providerIds.add(product.provider_id);
@@ -212,23 +223,17 @@ export async function POST(request: Request) {
         distributionLog.push(`${product.name}: 标记revenue_released失败`);
       }
 
-      // (8) 写入分配记录
-      await sb.from('release_records').insert({
-        user_product_id: up.id,
-        user_id: up.user_id,
-        product_id: up.product_id,
-        purchase_price: purchasePrice,
-        revenue_5pct: revenue5pct,
-        member_share: memberShare,
-        provider_share: providerShare,
-        inviter_share: inviterShare,
-        upstream_share: upstreamShare,
-        branch_share: branchShare,
-        company_share: companyShare,
-        released_at: new Date().toISOString(),
-      }).then(({ error }: { error: { message: string } | null }) => {
-        if (error) console.error('[unlock] 写入release_records失败:', error.message);
-      });
+      // (8) 写入分配记录（只记录核心字段，避免schema不匹配）
+      try {
+        await sb.from('release_records').insert({
+          user_product_id: up.id,
+          user_id: up.user_id,
+          product_id: up.product_id,
+          created_at: new Date().toISOString()
+        });
+      } catch (e: any) {
+        console.error('[unlock] 写入release_records失败:', e?.message);
+      }
     }
 
     const failedResults = results.filter(r => !r.success);
