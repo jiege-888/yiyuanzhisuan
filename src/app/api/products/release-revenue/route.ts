@@ -105,52 +105,52 @@ export async function POST(request: NextRequest) {
       // 获取会员信息
       const member = await queryOne('SELECT id, inviter_id, provider_id, username FROM users WHERE id = $1', [userProduct.user_id]);
 
-      // 1. 会员 2% → balance
+      // 1. 会员 2% → energy_value（智算金）
       await execute(
-        `UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2`,
+        `UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2`,
         [memberShare, userProduct.user_id]
       );
 
-      // 2. 直推人 0.25% → balance
+      // 2. 直推人 0.25% → energy_value
       let directRewardTo: string | null = null;
       if (directReward > 0 && member?.inviter_id) {
         const inviter = await queryOne('SELECT id FROM users WHERE id = $1', [member.inviter_id]);
         if (inviter) {
           directRewardTo = inviter.id;
-          await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [directReward, inviter.id]);
+          await execute('UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2', [directReward, inviter.id]);
         }
       }
 
-      // 3. 服务商 2% → balance
+      // 3. 服务商 2% → energy_value
       const providerId = userProduct.product_provider_id || userProduct.seller_id;
       if (providerShare > 0 && providerId) {
-        await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [providerShare, providerId]);
+        await execute('UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2', [providerShare, providerId]);
       }
 
-      // 4. 上级服务商 0.25% → balance（无上级时归服务网点）
+      // 4. 上级服务商 0.25% → energy_value（无上级时归服务网点）
       const providerInfo = await queryOne('SELECT branch_id, parent_provider_id FROM providers WHERE user_id = $1', [providerId]);
       let actualParentProviderId: string | null = null;
       if (providerInfo?.parent_provider_id && parentShare > 0) {
         const parentProvider = await queryOne('SELECT user_id FROM providers WHERE id = $1', [providerInfo.parent_provider_id]);
         if (parentProvider?.user_id) {
           actualParentProviderId = providerInfo.parent_provider_id;
-          await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [parentShare, parentProvider.user_id]);
+          await execute('UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2', [parentShare, parentProvider.user_id]);
         }
       }
 
-      // 5. 服务网点 0.1%（+无上级时0.25%归网点）→ balance
+      // 5. 服务网点 0.1%（+无上级时0.25%归网点）→ energy_value
       const distributionBranchId: string | null = providerInfo?.branch_id || null;
       const noParentExtra = actualParentProviderId ? 0 : parentShare;
       const branchTotalShare = branchShare + noParentExtra;
       if (providerInfo?.branch_id && branchTotalShare > 0) {
-        await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [branchTotalShare, providerInfo.branch_id]);
+        await execute('UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2', [branchTotalShare, providerInfo.branch_id]);
       }
 
-      // 6. 公司运营 0.4% → balance
+      // 6. 公司运营 0.4% → energy_value
       if (companyShare > 0) {
         const adminUser = await queryOne("SELECT id FROM users WHERE role = 'admin' LIMIT 1");
         if (adminUser) {
-          await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [companyShare, adminUser.id]);
+          await execute('UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2', [companyShare, adminUser.id]);
         }
       }
 

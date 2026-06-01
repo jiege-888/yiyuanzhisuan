@@ -67,22 +67,22 @@ export async function POST(request: NextRequest) {
       const branchShare = Math.round(purchasePrice * 0.001 * 100) / 100;
       const companyShare = Math.round(purchasePrice * 0.004 * 100) / 100;
 
-      // 1. 会员 2% → balance
+      // 1. 会员 2% → energy_value
       await execute(
-        `UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2`,
+        `UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2`,
         [memberShare, userId]
       );
 
       // 2. 直推人 0.25%
       const member = await queryOne('SELECT inviter_id FROM users WHERE id = $1', [userId]);
       if (directReward > 0 && member?.inviter_id) {
-        await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [directReward, member.inviter_id]);
+        await execute('UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2', [directReward, member.inviter_id]);
       }
 
       // 3. 服务商 2%
       const providerId = product?.provider_id || userProduct.seller_id;
       if (providerShare > 0 && providerId) {
-        await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [providerShare, providerId]);
+        await execute('UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2', [providerShare, providerId]);
       }
 
       // 4. 上级服务商 0.25%（无上级时归网点）
@@ -92,7 +92,7 @@ export async function POST(request: NextRequest) {
         const parentProvider = await queryOne('SELECT user_id FROM providers WHERE id = $1', [providerInfo.parent_provider_id]);
         if (parentProvider?.user_id) {
           actualParentProviderId = providerInfo.parent_provider_id;
-          await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [parentShare, parentProvider.user_id]);
+          await execute('UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2', [parentShare, parentProvider.user_id]);
         }
       }
 
@@ -100,14 +100,14 @@ export async function POST(request: NextRequest) {
       const noParentExtra = actualParentProviderId ? 0 : parentShare;
       const branchTotalShare = branchShare + noParentExtra;
       if (providerInfo?.branch_id && branchTotalShare > 0) {
-        await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [branchTotalShare, providerInfo.branch_id]);
+        await execute('UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2', [branchTotalShare, providerInfo.branch_id]);
       }
 
       // 6. 公司运营 0.4%
       if (companyShare > 0) {
         const adminUser = await queryOne("SELECT id FROM users WHERE role = 'admin' LIMIT 1");
         if (adminUser) {
-          await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [companyShare, adminUser.id]);
+          await execute('UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2', [companyShare, adminUser.id]);
         }
       }
 
