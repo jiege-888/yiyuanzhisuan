@@ -4840,14 +4840,12 @@ export default function AdminPage() {
   const loadReleaseRecords = async (startDate?: string, endDate?: string) => {
     setReleaseLoading(true);
     try {
-      const userStr = localStorage.getItem('user');
-      if (!userStr) return;
-      const user = JSON.parse(userStr);
-      let url = `/api/admin/release-records?adminId=${user.id}`;
-      if (startDate) url += `&startDate=${startDate}`;
-      if (endDate) url += `&endDate=${endDate}`;
+      let url = '/api/admin/release-records';
+      if (startDate) url += `?startDate=${startDate}`;
+      if (endDate) url += `${startDate ? '&' : '?'}endDate=${endDate}`;
       const res = await fetch(url);
       const data = await res.json();
+      console.log('[release-records] API response:', data.success, 'records:', data.data?.records?.length, 'stats:', JSON.stringify(data.data?.stats));
       if (data.success) {
         setReleaseRecords(data.data?.records || []);
         if (data.data?.stats) setReleaseStats(data.data.stats);
