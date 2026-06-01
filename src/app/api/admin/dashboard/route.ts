@@ -178,13 +178,14 @@ export async function GET(request: NextRequest) {
       ORDER BY total_revenue DESC
     `);
 
-    // 8. 平台总流通
+    // 8. 平台总流通 + 各角色产力值分布
     const circulationBase = await queryOne<{ total_balance: string; total_energy: string }>(`
       SELECT
         COALESCE(SUM(balance), 0)::text as total_balance,
         COALESCE(SUM(energy_value), 0)::text as total_energy
       FROM users
     `);
+    const energyDistribution = await query(`SELECT role, COALESCE(SUM(energy_value), 0)::text as total_energy FROM users GROUP BY role`);
 
     // 构建返回数据
     return NextResponse.json({
@@ -248,6 +249,10 @@ export async function GET(request: NextRequest) {
         circulation: {
           totalBalance: parseFloat(circulationBase?.total_balance || '0'),
           totalPoints: parseFloat(circulationBase?.total_energy || '0'),
+          adminEnergy: parseFloat((energyDistribution as any[])?.find(r => r.role === 'admin')?.total_energy || '0'),
+          branchEnergy: parseFloat((energyDistribution as any[])?.find(r => r.role === 'branch')?.total_energy || '0'),
+          providerEnergy: parseFloat((energyDistribution as any[])?.find(r => r.role === 'provider')?.total_energy || '0'),
+          memberEnergy: parseFloat((energyDistribution as any[])?.find(r => r.role === 'member')?.total_energy || '0'),
         },
         teamRanking: (teamRanking || []).map(t => ({
           providerId: t.provider_id,

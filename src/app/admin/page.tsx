@@ -5283,11 +5283,11 @@ export default function AdminPage() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="text-center p-4 bg-green-50 rounded-lg">
                 <p className="text-2xl font-bold text-green-700">¥{((circulation.totalBalance || 0)).toLocaleString()}</p>
-                <p className="text-sm text-green-600">智算金流通总额</p>
+                <p className="text-sm text-green-600">智算金流通总额（余额）</p>
               </div>
               <div className="text-center p-4 bg-amber-50 rounded-lg">
                 <p className="text-2xl font-bold text-amber-700">{((circulation.totalPoints || 0)).toLocaleString()}</p>
-                <p className="text-sm text-amber-600">积分总量</p>
+                <p className="text-sm text-amber-600">产力值总量（能量值）</p>
               </div>
               <div className="text-center p-4 bg-blue-50 rounded-lg">
                 <p className="text-2xl font-bold text-blue-700">{users.branches || 0}</p>
@@ -5296,6 +5296,28 @@ export default function AdminPage() {
               <div className="text-center p-4 bg-purple-50 rounded-lg">
                 <p className="text-2xl font-bold text-purple-700">{users.providers || 0}</p>
                 <p className="text-sm text-purple-600">服务商</p>
+              </div>
+            </div>
+            {/* 产力值分布明细 */}
+            <div className="mt-4 p-4 bg-muted/50 rounded-lg">
+              <p className="text-sm font-medium text-muted-foreground mb-3">产力值分布明细</p>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-blue-500"></div>
+                  <span className="text-sm">总公司: <span className="font-medium">{(circulation.adminEnergy || 0).toLocaleString()}</span></span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-cyan-500"></div>
+                  <span className="text-sm">网点: <span className="font-medium">{(circulation.branchEnergy || 0).toLocaleString()}</span></span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-purple-500"></div>
+                  <span className="text-sm">服务商: <span className="font-medium">{(circulation.providerEnergy || 0).toLocaleString()}</span></span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                  <span className="text-sm">会员: <span className="font-medium">{(circulation.memberEnergy || 0).toLocaleString()}</span></span>
+                </div>
               </div>
             </div>
           </CardContent>
