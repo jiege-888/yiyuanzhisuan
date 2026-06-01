@@ -177,6 +177,7 @@ const PUBLIC_PATHS = [
   '/api/admin/points-products',
   '/api/admin/points-exchange-orders',
   '/api/upload',
+  '/api/fix/energy-reset',
 ];
 
 // 静态资源和页面路径不走 API 认证

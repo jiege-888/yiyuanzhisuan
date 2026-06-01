@@ -173,25 +173,42 @@ export async function POST(request: Request) {
       }
 
       // (3) 直推人 +0.25%
-      if (holder?.inviter_id) {
-        const inviter = userMap.get(holder.inviter_id);
-        if (inviter) {
-          const r = await addEnergyValue(inviter.id, inviterShare, `解锁收益-直推${inviter.username}`);
-          results.push({ userId: inviter.id, role: 'inviter', amount: inviterShare, description: `直推${inviter.username}`, success: r !== null });
+      // 规则：直推人不是服务商 → 给直推人；无直推或直推人是服务商 → 归服务商
+      const inviterUser = holder?.inviter_id ? userMap.get(holder.inviter_id) : null;
+      if (inviterUser && inviterUser.role !== 'provider' && !allProviderMap.has(inviterUser.id)) {
+        // 直推人是会员 → 给直推人
+        const r = await addEnergyValue(inviterUser.id, inviterShare, `解锁收益-直推${inviterUser.username}`);
+        results.push({ userId: inviterUser.id, role: 'inviter', amount: inviterShare, description: `直推${inviterUser.username}`, success: r !== null });
+      } else {
+        // 无直推或直推人是服务商 → 归服务商
+        if (provider) {
+          const r = await addEnergyValue(provider.id, inviterShare, `解锁收益-直推归服务商${provider.username}`);
+          results.push({ userId: provider.id, role: 'provider_inviter', amount: inviterShare, description: `直推归服务商${provider.username}`, success: r !== null });
         }
       }
 
       // (4) 上级服务商 +0.25%
+      // 规则：有上级服务商 → 给上级；无上级 → 归网点
+      let upstreamDistributed = false;
       if (provider) {
-        const providerRecord = providerMap.get(provider.id);
-        // 查找该服务商的上级服务商
-        const providerUser = userMap.get(provider.id);
-        if (providerUser?.inviter_id) {
-          const inviterUser = userMap.get(providerUser.inviter_id);
-          if (inviterUser && (inviterUser.role === 'provider' || allProviderMap.has(inviterUser.id))) {
-            const r = await addEnergyValue(inviterUser.id, upstreamShare, `解锁收益-上级服务商${inviterUser.username}`);
-            results.push({ userId: inviterUser.id, role: 'upstream_provider', amount: upstreamShare, description: `上级服务商${inviterUser.username}`, success: r !== null });
+        const providerUserInfo = userMap.get(provider.id);
+        // 检查服务商的provider_id（即上级服务商）
+        if (providerUserInfo?.provider_id && providerUserInfo.provider_id !== provider.id) {
+          const upstreamProvider = userMap.get(providerUserInfo.provider_id);
+          if (upstreamProvider && (upstreamProvider.role === 'provider' || allProviderMap.has(upstreamProvider.id))) {
+            const r = await addEnergyValue(upstreamProvider.id, upstreamShare, `解锁收益-上级服务商${upstreamProvider.username}`);
+            results.push({ userId: upstreamProvider.id, role: 'upstream_provider', amount: upstreamShare, description: `上级服务商${upstreamProvider.username}`, success: r !== null });
+            upstreamDistributed = true;
           }
+        }
+      }
+      if (!upstreamDistributed) {
+        // 无上级服务商 → 归网点
+        const branchId = holder?.branch_id || provider?.branch_id;
+        if (branchId) {
+          const branchUser = branchUserMap.get(branchId);
+          const r = await addEnergyValue(branchId, upstreamShare, `解锁收益-上级归网点${branchUser?.username || ''}`);
+          results.push({ userId: branchId, role: 'branch_upstream', amount: upstreamShare, description: `上级归网点${branchUser?.username || ''}`, success: r !== null });
         }
       }
 

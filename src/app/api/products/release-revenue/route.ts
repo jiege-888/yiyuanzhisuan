@@ -77,11 +77,11 @@ export async function POST(request: Request) {
       if (p.provider_id) providerIds.add(p.provider_id);
     }
 
-    let providerUsers: { id: string; username: string; role: string; inviter_id: string | null }[] = [];
+    let providerUsers: { id: string; username: string; role: string; inviter_id: string | null; provider_id: string | null }[] = [];
     if (providerIds.size > 0) {
       const { data: pUsers } = await sb
         .from('users')
-        .select('id, username, role, inviter_id')
+        .select('id, username, role, inviter_id, provider_id')
         .in('id', [...providerIds]);
       providerUsers = pUsers || [];
     }
@@ -144,23 +144,29 @@ export async function POST(request: Request) {
         await addEnergyValue(product.provider_id, providerShare, `到期释放-服务商`);
       }
 
-      // (3) 直推人 +0.25%
-      if (holder.inviter_id) {
-        const inviter = inviterUserMap.get(holder.inviter_id);
-        if (inviter) {
-          await addEnergyValue(holder.inviter_id, inviterShare, `到期释放-直推${inviter.username}`);
-        }
+      // (3) 直推人 +0.25%（无直推或直推人是服务商 → 归服务商）
+      const inviter = holder.inviter_id ? inviterUserMap.get(holder.inviter_id) : null;
+      if (inviter && inviter.role !== 'provider' && !providerRecordMap.has(inviter.id)) {
+        await addEnergyValue(holder.inviter_id!, inviterShare, `到期释放-直推${inviter.username}`);
+      } else if (product.provider_id) {
+        await addEnergyValue(product.provider_id, inviterShare, `到期释放-直推归服务商`);
       }
 
-      // (4) 上级服务商 +0.25%
+      // (4) 上级服务商 +0.25%（无上级服务商 → 归网点）
+      let upstreamDistributed = false;
       if (product.provider_id) {
         const provUser = providerUserMap.get(product.provider_id);
-        if (provUser?.inviter_id) {
-          const upstreamUser = inviterUserMap.get(provUser.inviter_id);
-          if (upstreamUser && (upstreamUser.role === 'provider' || providerRecordMap.has(upstreamUser.id))) {
-            await addEnergyValue(provUser.inviter_id, upstreamShare, `到期释放-上级服务商${upstreamUser.username}`);
+        // 检查服务商的provider_id（即上级服务商）
+        if (provUser?.provider_id && provUser.provider_id !== product.provider_id) {
+          const upstreamProvider = inviterUserMap.get(provUser.provider_id);
+          if (upstreamProvider && (upstreamProvider.role === 'provider' || providerRecordMap.has(upstreamProvider.id))) {
+            await addEnergyValue(provUser.provider_id, upstreamShare, `到期释放-上级服务商${upstreamProvider.username}`);
+            upstreamDistributed = true;
           }
         }
+      }
+      if (!upstreamDistributed && holder.branch_id) {
+        await addEnergyValue(holder.branch_id, upstreamShare, `到期释放-上级归网点`);
       }
 
       // (5) 网点 +0.1%

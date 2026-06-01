@@ -99,9 +99,12 @@ export async function POST(request: Request) {
       if (product.provider_id) {
         await addEnergyValue(product.provider_id, providerShare, '强制释放-服务商');
       }
-      // 直推 +0.25%
-      if (holder?.inviter_id) {
+      // 直推 +0.25%（无直推或直推人是服务商 → 归服务商）
+      const inviterUser = holder?.inviter_id ? userMap.get(holder.inviter_id) : null;
+      if (inviterUser && inviterUser.role !== 'provider') {
         await addEnergyValue(holder.inviter_id, inviterShare, '强制释放-直推');
+      } else if (product.provider_id) {
+        await addEnergyValue(product.provider_id, inviterShare, '强制释放-直推归服务商');
       }
       // 网点 +0.1%
       if (holder?.branch_id) {
@@ -111,16 +114,20 @@ export async function POST(request: Request) {
       if (adminUser) {
         await addEnergyValue(adminUser.id, companyShare, '强制释放-公司');
       }
-      // 上级服务商 +0.25%
+      // 上级服务商 +0.25%（无上级服务商 → 归网点）
+      let upstreamDistributed = false;
       if (product.provider_id) {
-        const { data: provUser } = await sb
-          .from('users')
-          .select('inviter_id')
-          .eq('id', product.provider_id)
-          .single();
-        if (provUser?.inviter_id) {
-          await addEnergyValue(provUser.inviter_id, upstreamShare, '强制释放-上级服务商');
+        const providerUser = userMap.get(product.provider_id);
+        if (providerUser?.provider_id && providerUser.provider_id !== product.provider_id) {
+          const upstreamProvider = userMap.get(providerUser.provider_id);
+          if (upstreamProvider && upstreamProvider.role === 'provider') {
+            await addEnergyValue(upstreamProvider.id, upstreamShare, '强制释放-上级服务商');
+            upstreamDistributed = true;
+          }
         }
+      }
+      if (!upstreamDistributed && holder?.branch_id) {
+        await addEnergyValue(holder.branch_id, upstreamShare, '强制释放-上级归网点');
       }
 
       // 标记已释放
