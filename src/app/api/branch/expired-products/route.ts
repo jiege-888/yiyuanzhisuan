@@ -1,153 +1,154 @@
-import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-import { getSupabaseUrl, getSupabaseServiceRoleKey } from '@/lib/env';
+import { NextRequest, NextResponse } from 'next/server';
+import { query } from '@/storage/database/pg-client';
 
-export async function GET(request: Request) {
+// 获取服务商下的到期产品（含流转信息）
+export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const branchId = searchParams.get('branchId');
+    const searchParams = request.nextUrl.searchParams;
     const providerId = searchParams.get('providerId');
 
-    const url = getSupabaseUrl();
-    const key = getSupabaseServiceRoleKey();
-    const supabase = createClient(url, key);
-
-    let targetProviderIds: string[] = [];
-
-    if (providerId) {
-      targetProviderIds = [providerId];
-    } else if (branchId) {
-      const { data: providers } = await supabase
-        .from('providers')
-        .select('user_id')
-        .eq('branch_id', branchId);
-      targetProviderIds = (providers || []).map((p: any) => p.user_id);
-    } else {
-      return NextResponse.json({ success: false, message: '缺少branchId或providerId' }, { status: 400 });
+    if (!providerId) {
+      return NextResponse.json({ error: '缺少服务商ID' }, { status: 400 });
     }
 
-    if (targetProviderIds.length === 0) {
-      return NextResponse.json({ success: true, data: [] });
+    // 查询该服务商下所有持仓中的用户产品
+    const userProducts = await query<{
+      id: string;
+      user_id: string;
+      product_id: string;
+      purchase_price: number;
+      purchase_date: string;
+      expire_date: string;
+      status: string;
+      revenue_released: boolean;
+      expected_profit: number;
+      product_name: string;
+      product_code: string;
+      product_price: number;
+      period: number;
+      profit_rate: number;
+      market_rate: number;
+      provider_id: string;
+      username: string;
+      phone: string;
+      unique_id: string;
+      real_name: string;
+    }>(
+      `SELECT 
+        up.id, up.user_id, up.product_id, up.purchase_price, 
+        up.purchase_date, up.expire_date, up.status, up.revenue_released,
+        COALESCE(up.expected_profit, 0) as expected_profit,
+        p.name as product_name, p.code as product_code, 
+        p.price as product_price, p.period, 
+        COALESCE(p.profit_rate, 0) as profit_rate,
+        COALESCE(p.market_rate, 0) as market_rate,
+        p.provider_id,
+        u.username, u.phone, u.unique_id, u.real_name
+      FROM user_products up
+      JOIN products p ON up.product_id = p.id
+      JOIN users u ON up.user_id = u.id
+      WHERE p.provider_id = $1 AND up.status = 'holding'
+      ORDER BY up.expire_date ASC`,
+      [providerId]
+    );
+
+    // 查询每个产品的流转记录
+    const productIds = userProducts.map(up => up.product_id);
+    let flowRecords: Array<{
+      product_id: string;
+      flow_type: string;
+      buyer_name: string;
+      buyer_phone: string;
+      seller_name: string;
+      seller_phone: string;
+      created_at: string;
+    }> = [];
+
+    if (productIds.length > 0) {
+      flowRecords = await query(
+        `SELECT product_id, flow_type, buyer_name, buyer_phone, 
+                seller_name, seller_phone, created_at
+         FROM product_flow_records 
+         WHERE product_id = ANY($1)
+         ORDER BY created_at ASC`,
+        [productIds]
+      );
     }
 
-    // 查询这些服务商的产品
-    const { data: products } = await supabase
-      .from('products')
-      .select('id, provider_id')
-      .in('provider_id', targetProviderIds);
-
-    const productIds = (products || []).map((p: any) => p.id);
-    if (productIds.length === 0) {
-      return NextResponse.json({ success: true, data: [] });
+    // 按产品ID分组流转记录
+    const flowMap = new Map<string, typeof flowRecords>();
+    for (const r of flowRecords) {
+      if (!flowMap.has(r.product_id)) flowMap.set(r.product_id, []);
+      flowMap.get(r.product_id)!.push(r);
     }
 
-    // 查询所有到期的持仓（含各种状态：时间锁中、已解锁、已释放、已卖出）
-    const now = new Date().toISOString();
-    const { data: expired, error: upError } = await supabase
-      .from('user_products')
-      .select(`
-        id, user_id, product_id, purchase_price, purchase_date, expire_date,
-        status, revenue_released, expected_profit, unlock_time
-      `)
-      .in('product_id', productIds)
-      .eq('status', 'holding')
-      .lt('expire_date', now);
-
-    if (upError) {
-      return NextResponse.json({ success: false, message: '查询到期产品失败' }, { status: 500 });
-    }
-
-    // 批量查询产品信息
-    const upProductIds = [...new Set((expired || []).map((e: any) => e.product_id))];
-    const { data: productDetails } = await supabase
-      .from('products')
-      .select('id, name, code, price, period, total_rate, market_rate, profit_rate, provider_id')
-      .in('id', upProductIds);
-
-    const productMap: Record<string, any> = {};
-    (productDetails || []).forEach((p: any) => {
-      productMap[p.id] = p;
-    });
-
-    // 批量查询持有人名称
-    const userIds = [...new Set((expired || []).map((e: any) => e.user_id))];
-    const { data: users } = await supabase
-      .from('users')
-      .select('id, username, unique_id, phone')
-      .in('id', userIds);
-
-    const userNameMap: Record<string, any> = {};
-    (users || []).forEach((u: any) => {
-      userNameMap[u.id] = u;
-    });
-
-    // 批量查询服务商名称
-    const providerIds2 = [...new Set((productDetails || []).map((p: any) => p.provider_id))];
-    const { data: providerUsers } = await supabase
-      .from('users')
-      .select('id, username')
-      .in('id', providerIds2);
-
-    const providerNameMap: Record<string, string> = {};
-    (providerUsers || []).forEach((u: any) => {
-      providerNameMap[u.id] = u.username;
-    });
-
-    // 查询流转记录
-    const upIds = (expired || []).map((e: any) => e.id);
-    const { data: flowRecords } = await supabase
-      .from('product_flow_records')
-      .select('user_product_id, flow_type, buyer_name, seller_name, created_at')
-      .in('user_product_id', upIds);
-
-    const flowMap: Record<string, any[]> = {};
-    (flowRecords || []).forEach((r: any) => {
-      if (!flowMap[r.user_product_id]) flowMap[r.user_product_id] = [];
-      flowMap[r.user_product_id].push(r);
-    });
-
-    const result = (expired || []).map((e: any) => {
-      const product = productMap[e.product_id] || {};
-      const user = userNameMap[e.user_id] || {};
-      const flows = flowMap[e.id] || [];
-      const isUnlocked = e.unlock_time ? new Date(e.unlock_time) <= new Date() : false;
-      const isReleased = e.revenue_released === true;
-
-      // 判断状态：时间锁中 → 已解锁 → 已释放收益 → 已卖出
-      let releaseStatus = 'locked'; // 时间锁中
-      if (isUnlocked && !isReleased) releaseStatus = 'unlocked'; // 已解锁未释放
-      if (isReleased) releaseStatus = 'released'; // 已释放收益
+    // 组装结果
+    const products = userProducts.map(up => {
+      const fivePercent = Number(up.purchase_price) * 5 / 100;
+      const now = new Date();
+      const expireDate = new Date(up.expire_date);
+      const isExpired = now >= expireDate;
 
       return {
-        ...e,
-        product_name: product.name || '-',
-        product_code: product.code || '-',
-        price: product.price || e.purchase_price,
-        period: product.period || '-',
-        total_rate: product.total_rate || 0,
-        market_rate: product.market_rate || 0,
-        profit_rate: product.profit_rate || 0,
-        provider_name: providerNameMap[product.provider_id] || '-',
-        member_name: user.username || '-',
-        member_unique_id: user.unique_id || '-',
-        member_phone: user.phone || '-',
-        flow_records: flows,
-        release_status: releaseStatus,
-        unlock_time: e.unlock_time,
-        // 计算5%智算金分配
-        distribution_amount: Number(e.purchase_price) * 0.05,
-        member_share: Number(e.purchase_price) * 0.02,
-        provider_share: Number(e.purchase_price) * 0.02,
-        inviter_share: Number(e.purchase_price) * 0.0025,
-        parent_provider_share: Number(e.purchase_price) * 0.0025,
-        branch_share: Number(e.purchase_price) * 0.001,
-        company_share: Number(e.purchase_price) * 0.004
+        id: up.id,
+        productId: up.product_id,
+        productName: up.product_name,
+        productCode: up.product_code,
+        productPrice: Number(up.product_price),
+        purchasePrice: Number(up.purchase_price),
+        period: up.period,
+        profitRate: up.profit_rate,
+        marketRate: up.market_rate,
+        expectedProfit: Number(up.expected_profit),
+        fivePercent: fivePercent,
+        // 持有人信息
+        holderId: up.user_id,
+        holderName: up.username || up.real_name || '未知',
+        holderPhone: up.phone || '',
+        holderUniqueId: up.unique_id || '',
+        // 时间
+        purchaseDate: up.purchase_date,
+        expireDate: up.expire_date,
+        isExpired: isExpired,
+        // 状态
+        status: up.status,
+        revenueReleased: up.revenue_released,
+        // 解锁状态
+        lockStatus: !up.revenue_released ? 'locked' : 'unlocked',
+        // 流转记录
+        flowRecords: flowMap.get(up.product_id) || [],
+        // 5%智算金分配明细
+        distribution: {
+          member: fivePercent * 2 / 5,      // 2%
+          provider: fivePercent * 2 / 5,    // 2%
+          directReferrer: fivePercent * 0.25 / 5, // 0.25%
+          upstreamProvider: fivePercent * 0.25 / 5, // 0.25%
+          branch: fivePercent * 0.1 / 5,   // 0.1%
+          company: fivePercent * 0.4 / 5,  // 0.4%
+        }
       };
     });
 
-    return NextResponse.json({ success: true, data: result });
-  } catch (err: any) {
-    console.error('查询到期产品失败:', err);
-    return NextResponse.json({ success: false, message: err.message }, { status: 500 });
+    // 统计
+    const stats = {
+      total: products.length,
+      expired: products.filter(p => p.isExpired).length,
+      locked: products.filter(p => p.isExpired && p.lockStatus === 'locked').length,
+      unlocked: products.filter(p => p.revenueReleased).length,
+      totalFivePercent: products.filter(p => p.isExpired && p.lockStatus === 'locked')
+        .reduce((sum, p) => sum + p.fivePercent, 0),
+    };
+
+    return NextResponse.json({
+      success: true,
+      data: products,
+      stats
+    });
+  } catch (error) {
+    console.error('获取到期产品失败:', error);
+    return NextResponse.json(
+      { error: '获取到期产品失败', detail: String(error) },
+      { status: 500 }
+    );
   }
 }

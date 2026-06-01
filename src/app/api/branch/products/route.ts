@@ -1,80 +1,57 @@
-import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-import { getSupabaseUrl, getSupabaseServiceRoleKey } from '@/lib/env';
+import { NextRequest, NextResponse } from 'next/server';
+import { query } from '@/storage/database/pg-client';
 
-export async function GET(request: Request) {
+// 获取服务商下的所有产品
+export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const branchId = searchParams.get('branchId');
+    const searchParams = request.nextUrl.searchParams;
     const providerId = searchParams.get('providerId');
 
-    const url = getSupabaseUrl();
-    const key = getSupabaseServiceRoleKey();
-    const supabase = createClient(url, key);
-
-    if (providerId) {
-      // 按单个服务商查询产品
-      const { data: products, error: prodError } = await supabase
-        .from('products')
-        .select('*')
-        .eq('provider_id', providerId)
-        .order('created_at', { ascending: false });
-
-      if (prodError) {
-        return NextResponse.json({ success: false, message: '查询产品失败' }, { status: 500 });
-      }
-
-      return NextResponse.json({ success: true, data: products || [] });
+    if (!providerId) {
+      return NextResponse.json({ error: '缺少服务商ID' }, { status: 400 });
     }
 
-    if (!branchId) {
-      return NextResponse.json({ success: false, message: '缺少branchId或providerId' }, { status: 400 });
-    }
+    const products = await query<{
+      id: string;
+      name: string;
+      code: string;
+      price: number;
+      period: number;
+      total_rate: number;
+      market_rate: number;
+      profit_rate: number;
+      status: string;
+      created_at: string;
+    }>(
+      `SELECT id, name, code, price, period, 
+              COALESCE(total_rate, 0) as total_rate,
+              COALESCE(market_rate, 0) as market_rate,
+              COALESCE(profit_rate, 0) as profit_rate,
+              status, created_at
+       FROM products 
+       WHERE provider_id = $1 
+       ORDER BY created_at DESC`,
+      [providerId]
+    );
 
-    // 按网点查询所有服务商的产品
-    const { data: providers, error: provError } = await supabase
-      .from('providers')
-      .select('user_id')
-      .eq('branch_id', branchId);
-    
-    if (provError) {
-      return NextResponse.json({ success: false, message: '查询服务商失败' }, { status: 500 });
-    }
+    // 统计
+    const stats = {
+      total: products.length,
+      available: products.filter(p => p.status === 'available').length,
+      sold: products.filter(p => p.status === 'sold').length,
+      totalValue: products.reduce((sum, p) => sum + Number(p.price), 0),
+    };
 
-    const providerIds = (providers || []).map((p: any) => p.user_id);
-    if (providerIds.length === 0) {
-      return NextResponse.json({ success: true, data: [] });
-    }
-
-    const { data: products, error: prodError } = await supabase
-      .from('products')
-      .select('*')
-      .in('provider_id', providerIds)
-      .order('created_at', { ascending: false });
-
-    if (prodError) {
-      return NextResponse.json({ success: false, message: '查询产品失败' }, { status: 500 });
-    }
-
-    // 批量查询服务商名称
-    const { data: providerUsers } = await supabase
-      .from('users')
-      .select('id, username')
-      .in('id', providerIds);
-
-    const providerNameMap: Record<string, string> = {};
-    (providerUsers || []).forEach((u: any) => {
-      providerNameMap[u.id] = u.username;
+    return NextResponse.json({
+      success: true,
+      data: products,
+      stats
     });
-
-    const result = (products || []).map((p: any) => ({
-      ...p,
-      provider_name: providerNameMap[p.provider_id] || '-'
-    }));
-
-    return NextResponse.json({ success: true, data: result });
-  } catch (err: any) {
-    console.error('查询网点产品失败:', err);
-    return NextResponse.json({ success: false, message: err.message }, { status: 500 });
+  } catch (error) {
+    console.error('获取产品列表失败:', error);
+    return NextResponse.json(
+      { error: '获取产品列表失败', detail: String(error) },
+      { status: 500 }
+    );
   }
 }
