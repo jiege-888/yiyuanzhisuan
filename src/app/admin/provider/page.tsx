@@ -93,6 +93,8 @@ export default function ProviderDashboard() {
   const [energyRecords, setEnergyRecords] = useState<EnergyRecord[]>([]);
   const [energyStats, setEnergyStats] = useState({ totalRecharge: 0, totalTransferIn: 0, totalTransferOut: 0 });
   const [balanceInfo, setBalanceInfo] = useState({ balance: 0, energyValue: 0, revenue: 0, quota: 0, usedQuota: 0, totalSales: 0 });
+  const [revenueRecords, setRevenueRecords] = useState<any[]>([]);
+  const [revenueStats, setRevenueStats] = useState({ totalRevenue: 0, availableRevenue: 0, totalWithdrawn: 0, totalConverted: 0 });
   
   // 充值状态
   const [rechargeMember, setRechargeMember] = useState<Member | null>(null);
@@ -303,6 +305,21 @@ export default function ProviderDashboard() {
     }
   }, [token, getHeaders]);
 
+  // 获取产品分成收益记录
+  const fetchRevenue = useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      const res = await fetch(`/api/provider/revenue?providerId=${user.id}`, { headers: getHeaders() });
+      const data = await res.json();
+      if (data.success) {
+        setRevenueRecords(data.data?.records || []);
+        setRevenueStats(data.data?.stats || { totalRevenue: 0, availableRevenue: 0, totalWithdrawn: 0, totalConverted: 0 });
+      }
+    } catch (err) {
+      console.error('获取分成收益失败:', err);
+    }
+  }, [user?.id, getHeaders]);
+
   // 初始化加载
   useEffect(() => {
     if (token && activeMenu === 'overview') {
@@ -344,10 +361,11 @@ export default function ProviderDashboard() {
   useEffect(() => {
     if (token && activeMenu === 'energy') {
       fetchEnergy();
+      fetchRevenue();
       fetchBranchRequests();
       fetchEnergyWithdrawRecords();
     }
-  }, [token, activeMenu, fetchEnergy]);
+  }, [token, activeMenu, fetchEnergy, fetchRevenue]);
 
   useEffect(() => {
     if (token && activeMenu === 'quota') {
@@ -1635,13 +1653,100 @@ export default function ProviderDashboard() {
             {/* 收益记录 */}
             <Card>
               <CardHeader>
-                <CardTitle>收益记录</CardTitle>
+                <CardTitle className="flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5" />
+                  产品分成收益记录
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {/* 收益统计 */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                  <div className="bg-green-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500">总收益</p>
+                    <p className="text-lg font-bold text-green-600">¥{revenueStats.totalRevenue.toLocaleString()}</p>
+                  </div>
+                  <div className="bg-blue-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500">可用收益</p>
+                    <p className="text-lg font-bold text-blue-600">¥{revenueStats.availableRevenue.toLocaleString()}</p>
+                  </div>
+                  <div className="bg-orange-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500">已提现</p>
+                    <p className="text-lg font-bold text-orange-600">¥{revenueStats.totalWithdrawn.toLocaleString()}</p>
+                  </div>
+                  <div className="bg-purple-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500">已转收益</p>
+                    <p className="text-lg font-bold text-purple-600">¥{revenueStats.totalConverted.toLocaleString()}</p>
+                  </div>
+                </div>
+                {revenueRecords.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    <TrendingUp className="w-12 h-12 mx-auto mb-2 text-gray-300" />
+                    <p>暂无收益记录</p>
+                    <p className="text-sm mt-1">会员购买产品后，分成收益将在此显示</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {revenueRecords.map((record: any) => (
+                      <div key={record.id} className="border rounded-lg p-4 bg-gray-50">
+                        <div className="flex justify-between items-start">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <Badge variant={record.source === 'distribution' ? 'default' : 'secondary'}>
+                                {record.source_label || (record.source === 'distribution' ? '产品分成' : '下级分成')}
+                              </Badge>
+                              <span className="font-medium text-gray-800">
+                                {record.product_name || record.productName || '产品'}
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-sm text-gray-500">
+                              {record.product_price > 0 && (
+                                <span>产品价格: ¥{Number(record.product_price).toLocaleString()}</span>
+                              )}
+                              {record.market_fee > 0 && (
+                                <span>市场费: ¥{Number(record.market_fee).toLocaleString()}</span>
+                              )}
+                              {record.member_name && (
+                                <span>购买会员: {record.member_name}{record.member_phone ? ` (${record.member_phone})` : ''}</span>
+                              )}
+                              {record.subordinate_name && (
+                                <span>下级服务商: {record.subordinate_name}</span>
+                              )}
+                            </div>
+                            {record.source === 'distribution' && (
+                              <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1 text-xs text-gray-400">
+                                <span>服务商分成: ¥{Number(record.amount).toLocaleString()}</span>
+                                {record.direct_reward > 0 && <span>直推奖励: ¥{Number(record.direct_reward).toLocaleString()}</span>}
+                                {record.parent_provider_share > 0 && <span>上级分成: ¥{Number(record.parent_provider_share).toLocaleString()}</span>}
+                              </div>
+                            )}
+                            <div className="mt-1 text-xs text-gray-400">
+                              {formatDate(record.created_at)}
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-lg font-bold text-green-600">+¥{Number(record.amount).toLocaleString()}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* 能量值流转记录 */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Coins className="w-5 h-5" />
+                  能量值流转记录
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 {energyRecords.length === 0 ? (
                   <div className="text-center py-8 text-gray-500">
                     <Coins className="w-12 h-12 mx-auto mb-2 text-gray-300" />
-                    <p>暂无收益记录</p>
+                    <p>暂无流转记录</p>
                   </div>
                 ) : (
                   <div className="space-y-3">

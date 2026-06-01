@@ -34,7 +34,7 @@ export async function GET(request: NextRequest) {
     const client = getAdminSupabase();
 
     // ========== 1. 获取收益记录（关联流转记录获取买卖双方信息）==========
-    const { data: revenueRecords } = await client
+    const { data: revenueRecords, error: revenueError } = await client
       .rpc('rpc_query', {
         sql_query: `
           SELECT mr.*, 
@@ -52,12 +52,17 @@ export async function GET(request: NextRequest) {
           FROM member_revenue mr
           LEFT JOIN user_products up ON mr.user_product_id = up.id
           LEFT JOIN products p ON up.product_id = p.id
-          LEFT JOIN product_flow_records pfr ON pfr.user_product_id = up.id
+          LEFT JOIN product_flow_records pfr ON pfr.product_id = up.product_id::uuid
           WHERE mr.user_id = '${userId}'
           ORDER BY mr.created_at DESC
           LIMIT 50
         `
       });
+    
+    if (revenueError) {
+      console.error('[member/revenue] rpc_query error:', revenueError);
+    }
+    console.log('[member/revenue] revenueRecords count:', revenueRecords?.length ?? 'null');
 
     const formattedRecords = (revenueRecords || []).map((record: any) => ({
       id: record.id,

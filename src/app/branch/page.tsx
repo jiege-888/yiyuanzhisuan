@@ -3417,10 +3417,13 @@ export default function BranchPage() {
                             <p className="text-xs text-gray-500">
                               {r.type === 'member_withdraw' ? '会员提现' : 
                                r.type === 'provider_withdraw' ? '服务商提现' :
-                               r.type === 'market_fee_share' ? '市场费分润(5%)' :
-                               r.type === 'provider_upstream' ? '上级服务商分润(10%)' :
+                               r.type === 'market_fee_share' ? '市场费分润' :
+                               r.type === 'provider_upstream' ? '无上级服务商分成(归网点)' :
                                r.type === 'withdraw_income' ? '提现收入' : r.type}
                             </p>
+                            {r.product_id && (
+                              <p className="text-xs text-gray-400">产品ID: {r.product_id?.substring(0,8)}...</p>
+                            )}
                             <p className="text-xs text-gray-400">{r.created_at ? new Date(r.created_at).toLocaleString() : '-'}</p>
                           </div>
                           <Badge className={r.status === 'received' ? 'bg-blue-100 text-blue-700' : r.status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}>
