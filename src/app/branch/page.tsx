@@ -13,7 +13,8 @@ import {
   Eye, DollarSign, ClipboardList, CheckCircle, XCircle, Database,
   FileCheck, ClipboardCheck, User, History, Banknote, Gift, TrendingUp,
   AlertCircle, Cpu, Share2, FileText, PlusCircle, ArrowRightLeft, Search,
-  Repeat, Wallet
+  Repeat, Wallet, CheckSquare, Square, Lock, Unlock,
+  ShoppingCart, LockOpen
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -185,6 +186,9 @@ export default function BranchPage() {
   const [expiredProductsLoading, setExpiredProductsLoading] = useState(false);
   const [releasingIds, setReleasingIds] = useState<Set<string>>(new Set());
   const [releaseAllLoading, setReleaseAllLoading] = useState(false);
+  const [selectedExpiredIds, setSelectedExpiredIds] = useState<Set<string>>(new Set());
+  const [sellingIds, setSellingIds] = useState<Set<string>>(new Set());
+  const [batchSelling, setBatchSelling] = useState(false);
 
   // 服务商详情展开状态
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
@@ -1262,17 +1266,16 @@ export default function BranchPage() {
     const token = localStorage.getItem('token');
     setReleasingIds(prev => new Set(prev).add(upId));
     try {
-      const res = await fetch('/api/products/release-revenue', {
+      const res = await fetch('/api/branch/unlock', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ userProductId: upId })
+        body: JSON.stringify({ userProductIds: [upId], providerId })
       });
       const data = await res.json();
       if (data.success) {
-        setExpiredProducts(prev => prev.filter((p: any) => p.id !== upId));
         if (providerId) loadProviderExpired(providerId);
       } else {
-        alert(data.message || '释放失败');
+        alert(data.message || '解锁失败');
       }
     } catch (err) {
       alert('释放失败');
@@ -1284,18 +1287,19 @@ export default function BranchPage() {
   // 一键释放所有到期产品（可按服务商筛选）
   const handleReleaseAll = async (providerId?: string) => {
     const targetList = providerId ? providerExpiredProducts : expiredProducts;
-    if (!confirm(`确认释放 ${targetList.length} 个到期产品的收益？`)) return;
+    if (!confirm(`确认解锁并释放 ${targetList.length} 个到期产品的收益？`)) return;
     setReleaseAllLoading(true);
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch('/api/admin/force-release', {
+      const ids = targetList.map((p: any) => p.id);
+      const res = await fetch('/api/branch/unlock', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ adminKey: 'admin-force-release-2026', providerId })
+        body: JSON.stringify({ userProductIds: ids, providerId })
       });
       const data = await res.json();
       if (data.success) {
-        alert(`成功释放 ${data.data?.releasedCount || 0} 个产品的收益`);
+        alert(`成功解锁并释放 ${data.data?.releasedCount || 0} 个产品的收益`);
         loadExpiredProducts();
         if (providerId) loadProviderExpired(providerId);
       } else {
@@ -1350,6 +1354,155 @@ export default function BranchPage() {
   // 服务商详情内一键释放
   const handleProviderReleaseAll = (providerId: string) => {
     handleReleaseAll(providerId);
+  };
+
+  // 解锁单个产品（解锁=收益到账+可卖出）
+  const handleUnlock = async (upId: string) => {
+    if (!confirm('确认解锁此产品？解锁后收益将到账，会员可卖出。')) return;
+    setReleasingIds(prev => new Set(prev).add(upId));
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/admin/force-release', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ adminKey: 'admin-force-release-2026', userProductIds: [upId] })
+      });
+      const data = await res.json();
+      if (data.success) {
+        // 刷新到期产品列表
+        if (expandedProvider) loadProviderExpired(expandedProvider);
+      } else {
+        alert(data.message || '解锁失败');
+      }
+    } catch (err) {
+      alert('解锁失败');
+    } finally {
+      setReleasingIds(prev => { const s = new Set(prev); s.delete(upId); return s; });
+    }
+  };
+
+  // 批量解锁选中产品
+  const handleBatchUnlock = async (providerId: string) => {
+    if (selectedExpiredIds.size === 0) { alert('请先选择要解锁的产品'); return; }
+    if (!confirm(`确认解锁选中的 ${selectedExpiredIds.size} 个产品？解锁后收益将按比例分配到各账户。`)) return;
+    setReleaseAllLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/branch/unlock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ userProductIds: Array.from(selectedExpiredIds), providerId })
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(`成功解锁 ${data.data?.releasedCount || 0} 个产品`);
+        setSelectedExpiredIds(new Set());
+        if (expandedProvider) loadProviderExpired(expandedProvider);
+      } else {
+        alert(data.message || '批量解锁失败');
+      }
+    } catch (err) {
+      alert('批量解锁失败');
+    } finally {
+      setReleaseAllLoading(false);
+    }
+  };
+
+  // 强制卖出单个产品
+  const handleForceSell = async (upId: string) => {
+    if (!confirm('确认强制卖出此产品？本金+收益将返还给会员。')) return;
+    setSellingIds(prev => new Set(prev).add(upId));
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/branch/force-sell', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ userProductId: upId })
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (expandedProvider) loadProviderExpired(expandedProvider);
+      } else {
+        alert(data.message || '卖出失败');
+      }
+    } catch (err) {
+      alert('卖出失败');
+    } finally {
+      setSellingIds(prev => { const s = new Set(prev); s.delete(upId); return s; });
+    }
+  };
+
+  // 批量卖出选中产品
+  const handleBatchSell = async (providerId?: string) => {
+    const unlockedSelected = providerExpiredProducts
+      .filter((p: any) => selectedExpiredIds.has(p.id) && p.revenue_released)
+      .map((p: any) => p.id);
+    if (unlockedSelected.length === 0) { alert('请先选择已解锁的产品进行卖出'); return; }
+    if (!confirm(`确认卖出选中的 ${unlockedSelected.length} 个已解锁产品？`)) return;
+    setBatchSelling(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/branch/force-sell', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ userProductIds: unlockedSelected })
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(`成功卖出 ${data.data?.soldCount || 0} 个产品`);
+        setSelectedExpiredIds(new Set());
+        if (expandedProvider) loadProviderExpired(expandedProvider);
+      } else {
+        alert(data.message || '批量卖出失败');
+      }
+    } catch (err) {
+      alert('批量卖出失败');
+    } finally {
+      setBatchSelling(false);
+    }
+  };
+
+  // 单个强制卖出
+  const handleForceSellOne = async (upId: string) => {
+    if (!confirm('确认强制卖出该产品？卖出后本金+收益将到账会员余额')) return;
+    setSellingIds(prev => new Set(prev).add(upId));
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/branch/force-sell', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ userProductIds: [upId] })
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert('卖出成功');
+        if (expandedProvider) loadProviderExpired(expandedProvider);
+      } else {
+        alert(data.message || '卖出失败');
+      }
+    } catch (err) {
+      alert('卖出失败');
+    } finally {
+      setSellingIds(prev => { const s = new Set(prev); s.delete(upId); return s; });
+    }
+  };
+
+  // 切换选中
+  const toggleExpiredSelect = (id: string) => {
+    setSelectedExpiredIds(prev => {
+      const s = new Set(prev);
+      if (s.has(id)) s.delete(id); else s.add(id);
+      return s;
+    });
+  };
+
+  // 全选/取消全选
+  const toggleSelectAll = () => {
+    if (selectedExpiredIds.size === providerExpiredProducts.length) {
+      setSelectedExpiredIds(new Set());
+    } else {
+      setSelectedExpiredIds(new Set(providerExpiredProducts.map((p: any) => p.id)));
+    }
   };
 
   const loadCapitalFlow = useCallback(async (page = 1) => {
@@ -2728,76 +2881,137 @@ export default function BranchPage() {
                                     <>
                                       {/* 释放规则说明 */}
                                       <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3">
-                                        <p className="text-sm text-amber-700">产品到期后，按产品价值的<b>5%</b>作为智算金释放：会员2% | 服务商2% | 直推0.25% | 上级服务商0.25% | 服务网点0.1% | 公司运营0.4%</p>
+                                        <p className="text-sm text-amber-700">产品到期后，网点点击<b>解锁</b>即释放收益到账。按产品价值<b>5%</b>分配：会员2% | 服务商2% | 直推0.25% | 上级服务商0.25% | 网点0.1% | 公司0.4%。解锁后会员可卖出。</p>
                                       </div>
                                       {providerExpiredLoading ? (
                                         <div className="text-center py-4 text-gray-400">加载中...</div>
                                       ) : providerExpiredProducts.length === 0 ? (
-                                        <div className="text-center py-4 text-gray-400">暂无到期未释放的产品</div>
+                                        <div className="text-center py-4 text-gray-400">暂无到期产品</div>
                                       ) : (
                                         <>
-                                          <div className="flex items-center gap-2 mb-3">
+                                          {/* 批量操作栏 */}
+                                          <div className="flex items-center gap-3 mb-3 flex-wrap">
+                                            <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                                              <input
+                                                type="checkbox"
+                                                checked={providerExpiredProducts.length > 0 && providerExpiredProducts.every((p: any) => selectedExpiredIds.has(p.id))}
+                                                onChange={(e) => {
+                                                  const newSet = new Set<string>();
+                                                  if (e.target.checked) {
+                                                    providerExpiredProducts.forEach((p: any) => newSet.add(p.id));
+                                                  }
+                                                  setSelectedExpiredIds(newSet);
+                                                }}
+                                                className="w-4 h-4"
+                                              />
+                                              全选
+                                            </label>
+                                            <span className="text-sm text-gray-500">已选 {selectedExpiredIds.size} 个</span>
                                             <Button
                                               size="sm"
                                               className="bg-amber-500 hover:bg-amber-600 text-white"
-                                              onClick={() => handleProviderReleaseAll(provider.id)}
-                                              disabled={releaseAllLoading}
+                                              onClick={() => handleBatchUnlock(provider.id)}
+                                              disabled={selectedExpiredIds.size === 0 || releaseAllLoading}
                                             >
                                               {releaseAllLoading ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Zap className="w-3 h-3 mr-1" />}
-                                              一键释放（{providerExpiredProducts.length}个）
+                                              批量解锁释放({selectedExpiredIds.size})
+                                            </Button>
+                                            <Button
+                                              size="sm"
+                                              className="bg-green-600 hover:bg-green-700 text-white"
+                                              onClick={() => handleBatchSell(provider.id)}
+                                              disabled={selectedExpiredIds.size === 0 || releaseAllLoading}
+                                            >
+                                              <ShoppingCart className="w-3 h-3 mr-1" />
+                                              批量卖出({selectedExpiredIds.size})
                                             </Button>
                                             <Button size="sm" variant="outline" onClick={() => loadProviderExpired(provider.id)}>
                                               <RefreshCw className="w-3 h-3 mr-1" />刷新
                                             </Button>
                                           </div>
-                                          <table className="w-full text-sm bg-white rounded border">
-                                            <thead>
-                                              <tr className="border-b bg-gray-50">
-                                                <th className="text-left py-2 px-3">产品</th>
-                                                <th className="text-left py-2 px-3">编号</th>
-                                                <th className="text-left py-2 px-3">价格</th>
-                                                <th className="text-left py-2 px-3">周期</th>
-                                                <th className="text-left py-2 px-3">到期时间</th>
-                                                <th className="text-left py-2 px-3">5%智算金</th>
-                                                <th className="text-left py-2 px-3">会员2%</th>
-                                                <th className="text-left py-2 px-3">服务商2%</th>
-                                                <th className="text-left py-2 px-3">持有人</th>
-                                                <th className="text-left py-2 px-3">操作</th>
-                                              </tr>
-                                            </thead>
-                                            <tbody>
-                                              {providerExpiredProducts.map((p: any) => {
-                                                const price = Number(p.purchase_price || p.price || 0);
-                                                const total5pct = price * 0.05;
-                                                const memberShare = price * 0.02;
-                                                const provShare = price * 0.02;
-                                                return (
-                                                  <tr key={p.id} className="border-b hover:bg-gray-50">
-                                                    <td className="py-2 px-3">{p.product_name || p.name || '-'}</td>
-                                                    <td className="py-2 px-3 font-mono text-xs">{p.product_code || p.code || '-'}</td>
-                                                    <td className="py-2 px-3 font-semibold">¥{price.toLocaleString()}</td>
-                                                    <td className="py-2 px-3">{p.period}天</td>
-                                                    <td className="py-2 px-3 text-xs text-red-500">{p.expire_date?.substring(0, 16)?.replace('T', ' ')}</td>
-                                                    <td className="py-2 px-3 font-semibold text-amber-600">¥{total5pct.toFixed(2)}</td>
-                                                    <td className="py-2 px-3 text-blue-600">¥{memberShare.toFixed(2)}</td>
-                                                    <td className="py-2 px-3 text-purple-600">¥{provShare.toFixed(2)}</td>
-                                                    <td className="py-2 px-3 text-xs">{p.member_name || '-'}</td>
-                                                    <td className="py-2 px-3">
-                                                      <Button
-                                                        size="sm"
-                                                        onClick={() => handleReleaseOne(p.id, provider.id)}
-                                                        disabled={releasingIds.has(p.id)}
-                                                        className="bg-amber-500 hover:bg-amber-600 text-white text-xs"
-                                                      >
-                                                        {releasingIds.has(p.id) ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Zap className="w-3 h-3 mr-1" />}
-                                                        释放
-                                                      </Button>
-                                                    </td>
-                                                  </tr>
-                                                );
-                                              })}
-                                            </tbody>
-                                          </table>
+                                          {/* 产品列表 */}
+                                          <div className="space-y-2">
+                                            {providerExpiredProducts.map((p: any) => {
+                                              const price = Number(p.purchase_price || p.price || 0);
+                                              const total5pct = price * 0.05;
+                                              const memberShare = price * 0.02;
+                                              const provShare = price * 0.02;
+                                              const isUnlocked = p.revenue_released === true;
+                                              const isSold = p.status === 'sold';
+                                              const isSelected = selectedExpiredIds.has(p.id);
+                                              return (
+                                                <div key={p.id} className={`border rounded-lg p-3 ${isSelected ? 'border-amber-400 bg-amber-50' : 'bg-white'} ${isSold ? 'opacity-60' : ''}`}>
+                                                  <div className="flex items-start gap-3">
+                                                    {/* 选择框 */}
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={isSelected}
+                                                      onChange={(e) => {
+                                                        const newSet = new Set(selectedExpiredIds);
+                                                        if (e.target.checked) newSet.add(p.id);
+                                                        else newSet.delete(p.id);
+                                                        setSelectedExpiredIds(newSet);
+                                                      }}
+                                                      disabled={isSold}
+                                                      className="w-4 h-4 mt-1"
+                                                    />
+                                                    {/* 产品信息 */}
+                                                    <div className="flex-1 min-w-0">
+                                                      <div className="flex items-center gap-2 mb-1.5">
+                                                        <span className="font-medium">{p.product_name || p.name || '-'}</span>
+                                                        <span className="font-mono text-xs text-gray-400">{p.product_code || p.code || '-'}</span>
+                                                        {isSold ? (
+                                                          <Badge className="bg-gray-100 text-gray-500 text-xs">已卖出</Badge>
+                                                        ) : isUnlocked ? (
+                                                          <Badge className="bg-green-100 text-green-700 text-xs">已解锁</Badge>
+                                                        ) : (
+                                                          <Badge className="bg-red-100 text-red-600 text-xs">待解锁</Badge>
+                                                        )}
+                                                      </div>
+                                                      <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-1 text-sm">
+                                                        <div><span className="text-gray-400">价格：</span><span className="font-semibold">¥{price.toLocaleString()}</span></div>
+                                                        <div><span className="text-gray-400">周期：</span>{p.period}天</div>
+                                                        <div><span className="text-gray-400">到期：</span><span className="text-red-500 text-xs">{p.expire_date?.substring(0, 16)?.replace('T', ' ')}</span></div>
+                                                        <div><span className="text-gray-400">持有人：</span>{p.member_name || '-'}{p.member_unique_id ? ` [${p.member_unique_id}]` : ''}</div>
+                                                        <div><span className="text-gray-400">5%智算金：</span><span className="text-amber-600 font-semibold">¥{total5pct.toFixed(2)}</span></div>
+                                                        <div><span className="text-gray-400">会员2%：</span><span className="text-blue-600">¥{memberShare.toFixed(2)}</span></div>
+                                                        <div><span className="text-gray-400">服务商2%：</span><span className="text-purple-600">¥{provShare.toFixed(2)}</span></div>
+                                                        <div><span className="text-gray-400">流转：</span>{p.flow_type === 'provider_match' ? '服务商→会员' : '会员间流转'}</div>
+                                                      </div>
+                                                    </div>
+                                                    {/* 操作按钮 */}
+                                                    <div className="flex flex-col gap-1.5 shrink-0">
+                                                      {!isUnlocked && !isSold && (
+                                                        <Button
+                                                          size="sm"
+                                                          onClick={() => handleReleaseOne(p.id, provider.id)}
+                                                          disabled={releasingIds.has(p.id)}
+                                                          className="bg-amber-500 hover:bg-amber-600 text-white text-xs"
+                                                        >
+                                                          {releasingIds.has(p.id) ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <LockOpen className="w-3 h-3 mr-1" />}
+                                                          解锁释放
+                                                        </Button>
+                                                      )}
+                                                      {isUnlocked && !isSold && (
+                                                        <Button
+                                                          size="sm"
+                                                          onClick={() => handleForceSellOne(p.id)}
+                                                          disabled={sellingIds.has(p.id)}
+                                                          className="bg-green-600 hover:bg-green-700 text-white text-xs"
+                                                        >
+                                                          {sellingIds.has(p.id) ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <ShoppingCart className="w-3 h-3 mr-1" />}
+                                                          卖出
+                                                        </Button>
+                                                      )}
+                                                      {isSold && (
+                                                        <span className="text-xs text-gray-400 text-center">已完成</span>
+                                                      )}
+                                                    </div>
+                                                  </div>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
                                         </>
                                       )}
                                     </>

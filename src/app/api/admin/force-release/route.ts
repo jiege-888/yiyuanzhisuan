@@ -1,269 +1,145 @@
 import { NextResponse } from 'next/server';
-import { query, queryOne, execute } from '@/lib/supabase-client';
+import { createClient } from '@supabase/supabase-js';
 
-// 管理员/网点强制释放所有到期未释放产品的5%智算金
-// 分配比例：会员2%、服务商2%、直推0.25%、上级服务商0.25%、服务网点0.1%、公司运营0.4%
+function getSupabaseClient() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_KEY!
+  );
+}
+
+// 管理员一键释放所有到期产品收益（调用5%智算金分配逻辑）
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
-    const adminKey = body?.adminKey;
-    const providerId = body?.providerId; // 可选：按服务商筛选
-    const branchId = body?.branchId;     // 可选：按网点筛选
+    const { providerId } = body;
     
-    // 简单密钥验证
-    if (adminKey !== 'admin-force-release-2026') {
-      return NextResponse.json({ error: '无权操作' }, { status: 403 });
-    }
-
-    const now = new Date();
-
-    // 构建查询条件
-    let whereClause = `up.revenue_released = false AND up.status = 'holding'`;
-    const queryParams: any[] = [];
-    let paramIdx = 1;
-
+    const supabase = getSupabaseClient();
+    const now = new Date().toISOString();
+    
+    // 查询到期未释放的产品
+    let query = supabase
+      .from('user_products')
+      .select('id, user_id, product_id, purchase_price, expire_date, revenue_released, status, unlock_time')
+      .eq('status', 'holding')
+      .lt('expire_date', now)
+      .eq('revenue_released', false);
+    
     if (providerId) {
-      // 按服务商筛选：先查该服务商的所有产品ID
-      const providerProducts = await query(
-        `SELECT id FROM products WHERE provider_id = $1`, [providerId]
-      );
-      const productIds = (providerProducts || []).map((p: any) => p.id);
-      if (productIds.length === 0) {
-        return NextResponse.json({ success: true, message: '该服务商没有产品', data: { released: 0 } });
+      // 通过产品关联筛选服务商
+      const { data: providerProducts } = await supabase
+        .from('products')
+        .select('id')
+        .eq('provider_id', providerId);
+      
+      if (providerProducts && providerProducts.length > 0) {
+        const productIds = providerProducts.map(p => p.id);
+        query = query.in('product_id', productIds);
+      } else {
+        return NextResponse.json({ success: true, message: '该服务商没有到期产品', data: { releasedCount: 0, details: [] } });
       }
-      whereClause += ` AND up.product_id = ANY($${paramIdx}::uuid[])`;
-      queryParams.push(productIds);
-      paramIdx++;
-    } else if (branchId) {
-      // 按网点筛选：先查该网点下所有服务商的产品ID
-      const branchProviders = await query(
-        `SELECT user_id FROM providers WHERE branch_id = $1`, [branchId]
-      );
-      const providerIds = (branchProviders || []).map((p: any) => p.user_id);
-      if (providerIds.length === 0) {
-        return NextResponse.json({ success: true, message: '该网点没有服务商', data: { released: 0 } });
-      }
-      const branchProducts = await query(
-        `SELECT id FROM products WHERE provider_id = ANY($1::uuid[])`, [providerIds]
-      );
-      const productIds = (branchProducts || []).map((p: any) => p.id);
-      if (productIds.length === 0) {
-        return NextResponse.json({ success: true, message: '该网点没有产品', data: { released: 0 } });
-      }
-      whereClause += ` AND up.product_id = ANY($${paramIdx}::uuid[])`;
-      queryParams.push(productIds);
-      paramIdx++;
     }
-
-    // 查找所有到期未释放的持仓产品
-    const expiredProducts = await query(
-      `SELECT up.*, p.name as product_name, p.code as product_code, p.period,
-              p.total_rate, p.profit_rate, p.market_rate, p.provider_id as product_provider_id, p.price as product_price
-       FROM user_products up
-       JOIN products p ON up.product_id = p.id
-       WHERE ${whereClause}
-       ORDER BY up.expire_date ASC`,
-      queryParams
-    );
-
+    
+    const { data: expiredProducts, error } = await query;
+    if (error) throw error;
+    
     if (!expiredProducts || expiredProducts.length === 0) {
-      return NextResponse.json({ success: true, message: '没有到期未释放的产品', data: { released: 0 } });
+      return NextResponse.json({ success: true, message: '没有需要释放的到期产品', data: { releasedCount: 0, details: [] } });
     }
-
-    // 过滤出真正到期的
-    const toRelease = expiredProducts.filter((up: any) => {
-      if (!up.expire_date) return false;
-      return now >= new Date(up.expire_date);
-    });
-
-    if (toRelease.length === 0) {
-      return NextResponse.json({ success: true, message: '暂无到期产品需要释放', data: { released: 0 } });
-    }
-
-    let totalReleaseAmount = 0;
-    let totalMemberProfit = 0;
-    let totalProviderShare = 0;
-    let totalDirectShare = 0;
-    let totalParentShare = 0;
-    let totalBranchShare = 0;
-    let totalCompanyShare = 0;
-    const releasedProducts: string[] = [];
-    const distributionDetails: any[] = [];
-
-    for (const userProduct of toRelease) {
-      if (userProduct.revenue_released) continue;
-
-      const purchasePrice = parseFloat(userProduct.purchase_price);
-      const totalRate = parseFloat(userProduct.total_rate || 0);
-      const profitRate = parseFloat(userProduct.profit_rate || 0);
-      const marketRate = parseFloat(userProduct.market_rate || 0);
-
-      // 5%智算金分配
-      const releaseAmount = Math.round(purchasePrice * 0.05 * 100) / 100;
-      const memberShare = Math.round(purchasePrice * 0.02 * 100) / 100;
-      const providerShare = Math.round(purchasePrice * 0.02 * 100) / 100;
-      const directReward = Math.round(purchasePrice * 0.0025 * 100) / 100;
-      const parentShare = Math.round(purchasePrice * 0.0025 * 100) / 100;
-      const branchShare = Math.round(purchasePrice * 0.001 * 100) / 100;
-      const companyShare = Math.round(purchasePrice * 0.004 * 100) / 100;
-
+    
+    let releasedCount = 0;
+    const details: { userName: string; productName: string; amount: number }[] = [];
+    
+    for (const up of expiredProducts) {
+      // 获取产品信息
+      const { data: product } = await supabase.from('products').select('id, name, price, profit_rate, market_rate, period, provider_id').eq('id', up.product_id).single();
+      if (!product) continue;
+      
       // 获取会员信息
-      const member = await queryOne('SELECT id, inviter_id, provider_id, username FROM users WHERE id = $1', [userProduct.user_id]);
-
-      // 1. 会员 2% → balance
-      await execute(
-        `UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2`,
-        [memberShare, userProduct.user_id]
-      );
-
-      // 2. 直推人 0.25% → balance
-      let directRewardTo: string | null = null;
-      if (directReward > 0 && member?.inviter_id) {
-        const inviter = await queryOne('SELECT id FROM users WHERE id = $1', [member.inviter_id]);
-        if (inviter) {
-          directRewardTo = inviter.id;
-          await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [directReward, inviter.id]);
-        }
-      }
-
-      // 3. 服务商 2% → balance
-      const providerId = userProduct.product_provider_id || userProduct.seller_id;
-      if (providerShare > 0 && providerId) {
-        await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [providerShare, providerId]);
-      }
-
-      // 4. 上级服务商 0.25% → balance（无上级时归服务网点）
-      const providerInfo = await queryOne('SELECT branch_id, parent_provider_id FROM providers WHERE user_id = $1', [providerId]);
-      let actualParentProviderId: string | null = null;
-      if (providerInfo?.parent_provider_id && parentShare > 0) {
-        const parentProvider = await queryOne('SELECT user_id FROM providers WHERE id = $1', [providerInfo.parent_provider_id]);
-        if (parentProvider?.user_id) {
-          actualParentProviderId = providerInfo.parent_provider_id;
-          await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [parentShare, parentProvider.user_id]);
-        }
-      }
-
-      // 5. 服务网点 0.1%（+无上级时0.25%归网点）→ balance
-      const distributionBranchId: string | null = providerInfo?.branch_id || null;
-      const noParentExtra = actualParentProviderId ? 0 : parentShare;
-      const branchTotalShare = branchShare + noParentExtra;
-      if (providerInfo?.branch_id && branchTotalShare > 0) {
-        await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [branchTotalShare, providerInfo.branch_id]);
-      }
-
-      // 6. 公司运营 0.4% → balance
-      if (companyShare > 0) {
-        const adminUser = await queryOne("SELECT id FROM users WHERE role = 'admin' LIMIT 1");
-        if (adminUser) {
-          await execute('UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2', [companyShare, adminUser.id]);
-        }
-      }
-
-      // 写入energy_transactions明细
-      await execute(
-        `INSERT INTO energy_transactions (user_id, type, amount, note, created_at)
-         VALUES ($1, 'profit_release', $2, $3, NOW())`,
-        [userProduct.user_id, memberShare,
-         `产品「${userProduct.product_name}」到期释放智算金：会员2%¥${memberShare}`]
-      );
-
-      // 记录会员收益到 member_revenue
-      const holdingHours = (now.getTime() - new Date(userProduct.purchase_date).getTime()) / (1000 * 60 * 60);
-      const holdingDays = Math.max(1, Math.floor(holdingHours / 24));
-      await execute(
-        `INSERT INTO member_revenue 
-         (user_id, user_product_id, principal, profit, total_amount, converted_to_energy, status, product_name, product_code, product_period, total_rate, profit_rate, market_rate, holding_days)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
-        [userProduct.user_id, userProduct.id, purchasePrice, memberShare, purchasePrice + memberShare,
-         0, 'available', userProduct.product_name, userProduct.product_code, userProduct.period,
-         totalRate, profitRate, marketRate, holdingDays]
-      );
-
-      // 记录释放收益到 release_records
-      try {
-        await execute(
-          `INSERT INTO release_records 
-           (product_id, product_name, product_price, release_amount, release_rate,
-            member_id, member_name, member_share,
-            direct_referral_id, direct_referral_share,
-            provider_id, provider_share,
-            parent_provider_id, parent_provider_share,
-            senior_provider_id, senior_provider_share,
-            branch_id, branch_share, company_share)
-           VALUES ($1, $2, $3, $4, 0.05, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
-          [
-            userProduct.product_id, userProduct.product_name, purchasePrice, releaseAmount,
-            userProduct.user_id, member?.username || userProduct.user_id, memberShare,
-            directRewardTo, directReward,
-            providerId, providerShare,
-            actualParentProviderId, actualParentProviderId ? parentShare : 0,
-            null, 0,
-            distributionBranchId, branchShare, companyShare
-          ]
-        );
-      } catch (e) {
-        console.error('[FORCE RELEASE] 记录release_records失败:', e);
-      }
-
-      // 标记收益已释放
-      await execute(
-        `UPDATE user_products SET revenue_released = true, updated_at = NOW() WHERE id = $1`,
-        [userProduct.id]
-      );
-
-      // 通知会员
-      try {
-        const supabaseModule = await import('@/lib/supabase-client');
-        const { getSupabase } = supabaseModule;
-        const supabase = getSupabase();
-        await supabase.from('notifications').insert({
-          receiver_id: userProduct.user_id,
-          receiver_role: 'member',
-          type: 'revenue_released',
-          title: '智算金已释放',
-          content: `产品「${userProduct.product_name}」已到期，5%智算金已释放：会员2%¥${memberShare.toFixed(2)}已到账`,
-          is_read: false
-        });
-      } catch (e) {
-        console.error('[FORCE RELEASE] 通知发送失败:', e);
-      }
-
-      totalReleaseAmount += releaseAmount;
-      totalMemberProfit += memberShare;
-      totalProviderShare += providerShare;
-      totalDirectShare += directReward;
-      totalParentShare += parentShare;
-      totalBranchShare += branchShare;
-      totalCompanyShare += companyShare;
-      releasedProducts.push(userProduct.id);
-
-      distributionDetails.push({
-        productId: userProduct.product_id,
-        productName: userProduct.product_name,
-        purchasePrice,
-        releaseAmount,
-        memberShare, providerShare, directReward, parentShare, branchShare, companyShare,
+      const { data: member } = await supabase.from('users').select('id, username, real_name, inviter_id, provider_id').eq('id', up.user_id).single();
+      if (!member) continue;
+      
+      const totalReleaseRate = 5; // 总释放5%
+      const releaseAmount = Number(up.purchase_price) * totalReleaseRate / 100;
+      
+      // 分配5%智算金
+      const memberShare = Number(up.purchase_price) * 2 / 100;
+      const providerShare = Number(up.purchase_price) * 2 / 100;
+      const inviterShare = Number(up.purchase_price) * 0.25 / 100;
+      const upstreamShare = Number(up.purchase_price) * 0.25 / 100;
+      const branchShare = Number(up.purchase_price) * 0.1 / 100;
+      const companyShare = Number(up.purchase_price) * 0.4 / 100;
+      
+      // 1. 会员 +2%
+      await supabase.rpc('rpc_query', {
+        sql_query: `UPDATE users SET balance = COALESCE(balance, 0) + ${memberShare} WHERE id = '${member.id}'`
       });
+      
+      // 2. 服务商 +2%
+      if (product.provider_id) {
+        await supabase.rpc('rpc_query', {
+          sql_query: `UPDATE users SET balance = COALESCE(balance, 0) + ${providerShare} WHERE id = '${product.provider_id}'`
+        });
+      }
+      
+      // 3. 直推人 +0.25%
+      if (member.inviter_id) {
+        await supabase.rpc('rpc_query', {
+          sql_query: `UPDATE users SET balance = COALESCE(balance, 0) + ${inviterShare} WHERE id = '${member.inviter_id}'`
+        });
+      }
+      
+      // 4. 上级服务商 +0.25%
+      if (member.provider_id && member.provider_id !== product.provider_id) {
+        await supabase.rpc('rpc_query', {
+          sql_query: `UPDATE users SET balance = COALESCE(balance, 0) + ${upstreamShare} WHERE id = '${member.provider_id}'`
+        });
+      }
+      
+      // 5. 网点 +0.1%
+      const { data: providerUser } = await supabase.from('providers').select('branch_id').eq('user_id', product.provider_id).single();
+      if (providerUser?.branch_id) {
+        await supabase.rpc('rpc_query', {
+          sql_query: `UPDATE users SET balance = COALESCE(balance, 0) + ${branchShare} WHERE id = '${providerUser.branch_id}'`
+        });
+      }
+      
+      // 6. 公司运营 +0.4%
+      const { data: adminUser } = await supabase.from('users').select('id').eq('role', 'admin').limit(1).single();
+      if (adminUser) {
+        await supabase.rpc('rpc_query', {
+          sql_query: `UPDATE users SET balance = COALESCE(balance, 0) + ${companyShare} WHERE id = '${adminUser.id}'`
+        });
+      }
+      
+      // 标记已释放+已解锁
+      await supabase.from('user_products').update({
+        revenue_released: true,
+        unlock_time: new Date().toISOString()
+      }).eq('id', up.id);
+      
+      // 写入通知
+      await supabase.from('notifications').insert({
+        user_id: member.id,
+        type: 'revenue',
+        title: '产品收益已到账',
+        content: `您的产品${product.name}已到期，收益¥${memberShare.toFixed(2)}已到账，可以卖出提现`
+      });
+      
+      details.push({
+        userName: member.real_name || member.username,
+        productName: product.name,
+        amount: memberShare
+      });
+      releasedCount++;
     }
-
+    
     return NextResponse.json({
       success: true,
-      message: `已释放${releasedProducts.length}个产品的5%智算金`,
-      data: {
-        released: releasedProducts.length,
-        totalReleaseAmount,
-        totalMemberProfit,
-        totalProviderShare,
-        totalDirectShare,
-        totalParentShare,
-        totalBranchShare,
-        totalCompanyShare,
-        details: distributionDetails,
-      }
+      message: `成功释放${releasedCount}个到期产品收益`,
+      data: { releasedCount, totalAmount: details.reduce((s, d) => s + d.amount, 0), details }
     });
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : '未知错误';
-    console.error('[FORCE RELEASE] 异常:', error);
-    return NextResponse.json({ success: false, message }, { status: 500 });
+  } catch (error: any) {
+    return NextResponse.json({ success: false, message: error.message }, { status: 500 });
   }
 }

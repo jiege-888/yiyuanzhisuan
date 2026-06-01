@@ -41,47 +41,109 @@ export async function GET(request: Request) {
       return NextResponse.json({ success: true, data: [] });
     }
 
-    // 查询到期未释放的持仓
+    // 查询所有到期的持仓（含各种状态：时间锁中、已解锁、已释放、已卖出）
     const now = new Date().toISOString();
     const { data: expired, error: upError } = await supabase
       .from('user_products')
       .select(`
         id, user_id, product_id, purchase_price, purchase_date, expire_date,
-        status, revenue_released, expected_profit,
-        product:products(id, name, code, price, period, total_rate, market_rate, profit_rate)
+        status, revenue_released, expected_profit, unlock_time
       `)
       .in('product_id', productIds)
       .eq('status', 'holding')
-      .eq('revenue_released', false)
       .lt('expire_date', now);
 
     if (upError) {
       return NextResponse.json({ success: false, message: '查询到期产品失败' }, { status: 500 });
     }
 
+    // 批量查询产品信息
+    const upProductIds = [...new Set((expired || []).map((e: any) => e.product_id))];
+    const { data: productDetails } = await supabase
+      .from('products')
+      .select('id, name, code, price, period, total_rate, market_rate, profit_rate, provider_id')
+      .in('id', upProductIds);
+
+    const productMap: Record<string, any> = {};
+    (productDetails || []).forEach((p: any) => {
+      productMap[p.id] = p;
+    });
+
     // 批量查询持有人名称
     const userIds = [...new Set((expired || []).map((e: any) => e.user_id))];
     const { data: users } = await supabase
       .from('users')
-      .select('id, username')
+      .select('id, username, unique_id, phone')
       .in('id', userIds);
 
-    const userNameMap: Record<string, string> = {};
+    const userNameMap: Record<string, any> = {};
     (users || []).forEach((u: any) => {
-      userNameMap[u.id] = u.username;
+      userNameMap[u.id] = u;
     });
 
-    const result = (expired || []).map((e: any) => ({
-      ...e,
-      product_name: e.product?.name || '-',
-      product_code: e.product?.code || '-',
-      price: e.product?.price || e.purchase_price,
-      period: e.product?.period || '-',
-      total_rate: e.product?.total_rate || 0,
-      market_rate: e.product?.market_rate || 0,
-      profit_rate: e.product?.profit_rate || 0,
-      member_name: userNameMap[e.user_id] || '-'
-    }));
+    // 批量查询服务商名称
+    const providerIds2 = [...new Set((productDetails || []).map((p: any) => p.provider_id))];
+    const { data: providerUsers } = await supabase
+      .from('users')
+      .select('id, username')
+      .in('id', providerIds2);
+
+    const providerNameMap: Record<string, string> = {};
+    (providerUsers || []).forEach((u: any) => {
+      providerNameMap[u.id] = u.username;
+    });
+
+    // 查询流转记录
+    const upIds = (expired || []).map((e: any) => e.id);
+    const { data: flowRecords } = await supabase
+      .from('product_flow_records')
+      .select('user_product_id, flow_type, buyer_name, seller_name, created_at')
+      .in('user_product_id', upIds);
+
+    const flowMap: Record<string, any[]> = {};
+    (flowRecords || []).forEach((r: any) => {
+      if (!flowMap[r.user_product_id]) flowMap[r.user_product_id] = [];
+      flowMap[r.user_product_id].push(r);
+    });
+
+    const result = (expired || []).map((e: any) => {
+      const product = productMap[e.product_id] || {};
+      const user = userNameMap[e.user_id] || {};
+      const flows = flowMap[e.id] || [];
+      const isUnlocked = e.unlock_time ? new Date(e.unlock_time) <= new Date() : false;
+      const isReleased = e.revenue_released === true;
+
+      // 判断状态：时间锁中 → 已解锁 → 已释放收益 → 已卖出
+      let releaseStatus = 'locked'; // 时间锁中
+      if (isUnlocked && !isReleased) releaseStatus = 'unlocked'; // 已解锁未释放
+      if (isReleased) releaseStatus = 'released'; // 已释放收益
+
+      return {
+        ...e,
+        product_name: product.name || '-',
+        product_code: product.code || '-',
+        price: product.price || e.purchase_price,
+        period: product.period || '-',
+        total_rate: product.total_rate || 0,
+        market_rate: product.market_rate || 0,
+        profit_rate: product.profit_rate || 0,
+        provider_name: providerNameMap[product.provider_id] || '-',
+        member_name: user.username || '-',
+        member_unique_id: user.unique_id || '-',
+        member_phone: user.phone || '-',
+        flow_records: flows,
+        release_status: releaseStatus,
+        unlock_time: e.unlock_time,
+        // 计算5%智算金分配
+        distribution_amount: Number(e.purchase_price) * 0.05,
+        member_share: Number(e.purchase_price) * 0.02,
+        provider_share: Number(e.purchase_price) * 0.02,
+        inviter_share: Number(e.purchase_price) * 0.0025,
+        parent_provider_share: Number(e.purchase_price) * 0.0025,
+        branch_share: Number(e.purchase_price) * 0.001,
+        company_share: Number(e.purchase_price) * 0.004
+      };
+    });
 
     return NextResponse.json({ success: true, data: result });
   } catch (err: any) {
