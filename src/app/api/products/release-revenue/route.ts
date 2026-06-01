@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { query, queryOne, execute } from '@/lib/supabase-client';
 import { authenticateRequest } from '@/lib/auth';
 
-// 释放到期产品收益 - 产品到期后自动释放，会员收益到账balance
+// 释放到期产品收益 - 产品到期后自动释放
+// 会员获得：profit_rate% 收益 + 延迟的2%购买分成（购买时未发放）
+// 其他角色（服务商、直推、上级、分公司、总公司）在购买确认时已到账
 export async function POST(request: NextRequest) {
   try {
     const user = authenticateRequest(request);
@@ -31,9 +33,9 @@ export async function POST(request: NextRequest) {
     let productsToRelease: any[] = [];
 
     if (userProductId) {
-      // 单个产品模式
       const userProduct = await queryOne<any>(
-        `SELECT up.*, p.name as product_name, p.code as product_code, p.period, p.total_rate, p.profit_rate, p.market_rate, p.provider_id as product_provider_id
+        `SELECT up.*, p.name as product_name, p.code as product_code, p.period, 
+                p.total_rate, p.profit_rate, p.market_rate, p.provider_id as product_provider_id, p.price as product_price
          FROM user_products up
          JOIN products p ON up.product_id = p.id
          WHERE up.id = $1`,
@@ -43,9 +45,9 @@ export async function POST(request: NextRequest) {
         productsToRelease = [userProduct];
       }
     } else {
-      // 批量模式：查找该用户所有到期未释放的holding产品
       productsToRelease = await query(
-        `SELECT up.*, p.name as product_name, p.code as product_code, p.period, p.total_rate, p.profit_rate, p.market_rate, p.provider_id as product_provider_id
+        `SELECT up.*, p.name as product_name, p.code as product_code, p.period,
+                p.total_rate, p.profit_rate, p.market_rate, p.provider_id as product_provider_id, p.price as product_price
          FROM user_products up
          JOIN products p ON up.product_id = p.id
          WHERE up.user_id = $1 AND up.revenue_released = false AND up.status = 'holding'`,
@@ -57,25 +59,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, message: '没有待释放的产品', data: { released: 0 } });
     }
 
-    // 过滤出真正到期的产品（直接比较 now >= expire_date，不做中午12点限制）
+    // 过滤出真正到期的产品
     const expiredProducts = productsToRelease.filter((up: any) => {
       if (!up.expire_date) return false;
       return now >= new Date(up.expire_date);
     });
 
     if (expiredProducts.length === 0) {
-      return NextResponse.json({ 
-        success: true, 
-        message: '暂无到期产品需要释放收益', 
-        data: { released: 0 } 
+      return NextResponse.json({
+        success: true,
+        message: '暂无到期产品需要释放收益',
+        data: { released: 0 }
       });
     }
 
     let totalMemberProfit = 0;
+    let totalDelayedShare = 0;
     const releasedProducts: string[] = [];
+    const distributionDetails: any[] = [];
 
     for (const userProduct of expiredProducts) {
-      // 跳过已释放的
       if (userProduct.revenue_released) continue;
 
       const purchasePrice = parseFloat(userProduct.purchase_price);
@@ -83,9 +86,14 @@ export async function POST(request: NextRequest) {
       const totalRate = parseFloat(userProduct.total_rate || 0);
       const marketRate = parseFloat(userProduct.market_rate || 0);
 
-      // 会员到期收益 = purchase_price * profit_rate / 100
-      // 市场费在购买时已经分配给各角色（balance），这里不再重复分配
-      const memberProfit = purchasePrice * (profitRate / 100);
+      // 1. 会员到期收益 = purchase_price * profit_rate / 100
+      const memberProfit = Math.round(purchasePrice * (profitRate / 100) * 100) / 100;
+
+      // 2. 会员延迟的2%购买分成（购买时未发放，延迟到到期时到账）
+      const delayedShare = Math.round(purchasePrice * 0.02 * 100) / 100;
+
+      // 会员总到账 = 收益 + 延迟分成
+      const memberTotal = memberProfit + delayedShare;
 
       console.log('[RELEASE REVENUE] 释放收益:', {
         userProductId: userProduct.id,
@@ -93,20 +101,22 @@ export async function POST(request: NextRequest) {
         purchasePrice,
         profitRate,
         memberProfit,
+        delayedShare,
+        memberTotal,
       });
 
-      // 1. 会员收益到账 → balance（不是energy_value）
+      // 1. 会员收益 + 延迟分成到账 → balance
       await execute(
         `UPDATE users SET balance = COALESCE(balance, 0) + $1, updated_at = NOW() WHERE id = $2`,
-        [memberProfit, userProduct.user_id]
+        [memberTotal, userProduct.user_id]
       );
 
       // 2. 写入energy_transactions明细 - 收益释放
       await execute(
         `INSERT INTO energy_transactions (user_id, type, amount, note, created_at)
          VALUES ($1, 'profit_release', $2, $3, NOW())`,
-        [userProduct.user_id, memberProfit,
-         `产品「${userProduct.product_name}」到期释放收益${profitRate}%`]
+        [userProduct.user_id, memberTotal,
+         `产品「${userProduct.product_name}」到期释放：收益${profitRate}%¥${memberProfit}+延迟分成¥${delayedShare}`]
       );
 
       // 3. 记录会员收益到 member_revenue 表
@@ -127,7 +137,17 @@ export async function POST(request: NextRequest) {
         [userProduct.id]
       );
 
-      // 5. 通知会员
+      // 5. 更新 release_records 中该产品的 member_share 为已发放
+      try {
+        await execute(
+          `UPDATE release_records SET member_share = $1 WHERE product_id = $2`,
+          [delayedShare, userProduct.product_id]
+        );
+      } catch (e) {
+        console.error('[RELEASE REVENUE] 更新release_records失败:', e);
+      }
+
+      // 6. 通知会员
       try {
         const supabaseModule = await import('@/lib/supabase-client');
         const { getSupabase } = supabaseModule;
@@ -137,7 +157,7 @@ export async function POST(request: NextRequest) {
           receiver_role: 'member',
           type: 'revenue_released',
           title: '收益已释放',
-          content: `产品「${userProduct.product_name}」已到期，收益¥${memberProfit.toFixed(2)}已到账`,
+          content: `产品「${userProduct.product_name}」已到期，收益¥${memberProfit.toFixed(2)}+延迟分成¥${delayedShare.toFixed(2)}=¥${memberTotal.toFixed(2)}已到账`,
           is_read: false
         });
       } catch (e) {
@@ -145,20 +165,36 @@ export async function POST(request: NextRequest) {
       }
 
       totalMemberProfit += memberProfit;
+      totalDelayedShare += delayedShare;
       releasedProducts.push(userProduct.id);
+
+      distributionDetails.push({
+        productId: userProduct.product_id,
+        productName: userProduct.product_name,
+        purchasePrice,
+        memberProfit,
+        delayedShare,
+        memberTotal,
+        note: '其他角色（服务商/直推/上级/分公司/总公司）已在购买确认时到账'
+      });
     }
 
     // 获取会员最新余额
-    const memberAfter = await queryOne<any>('SELECT balance FROM users WHERE id = $1', [userId || expiredProducts[0]?.user_id]);
+    const memberId = userId || expiredProducts[0]?.user_id;
+    const memberAfter = await queryOne<any>('SELECT balance FROM users WHERE id = $1', [memberId]);
 
     return NextResponse.json({
       success: true,
-      message: `已释放${releasedProducts.length}个产品的收益，会员收益合计¥${totalMemberProfit.toFixed(2)}已到账`,
+      message: `已释放${releasedProducts.length}个产品的收益，会员收益合计¥${totalMemberProfit.toFixed(2)}+延迟分成¥${totalDelayedShare.toFixed(2)}=¥${(totalMemberProfit + totalDelayedShare).toFixed(2)}已到账`,
       data: {
         released: releasedProducts.length,
         totalMemberProfit,
+        totalDelayedShare,
+        totalToMember: totalMemberProfit + totalDelayedShare,
         revenueReleased: true,
-        userBalance: parseFloat(memberAfter?.balance || 0)
+        userBalance: parseFloat(memberAfter?.balance || 0),
+        details: distributionDetails,
+        note: '其他角色（服务商70%/直推10%/上级服务商10%/分公司5%/总公司5%）已在购买确认时按比例到账balance'
       }
     });
   } catch (error: unknown) {
