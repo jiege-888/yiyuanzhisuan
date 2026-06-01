@@ -432,7 +432,7 @@ export default function AdminPage() {
   const [systemConfig, setSystemConfig] = useState<SystemConfig>({});
   const [configLoading, setConfigLoading] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
-  const [systemSubTab, setSystemSubTab] = useState<'config' | 'data' | 'assign-role' | 'invite-code'>('config');
+  const [systemSubTab, setSystemSubTab] = useState<'config' | 'data' | 'assign-role' | 'invite-code' | 'force-release'>('config');
   
   // 数据清除 state
   const [clearDataPassword, setClearDataPassword] = useState('');
@@ -448,6 +448,8 @@ export default function AdminPage() {
 
   // 智算中心邀请码 state
   const [adminInviteCode, setAdminInviteCode] = useState('');
+  const [forceReleaseLoading, setForceReleaseLoading] = useState(false);
+  const [forceReleaseResult, setForceReleaseResult] = useState<any>(null);
   const [inviteCodeLoading, setInviteCodeLoading] = useState(false);
   const [inviteCodeMessage, setInviteCodeMessage] = useState<{type: 'success' | 'error', text: string} | null>(null);
 
@@ -574,6 +576,29 @@ export default function AdminPage() {
       setInviteCodeMessage({ type: 'error', text: '获取邀请码失败' });
     } finally {
       setInviteCodeLoading(false);
+    }
+  }, []);
+
+  // 强制释放到期收益
+  const handleForceRelease = useCallback(async () => {
+    if (!confirm('确定要强制释放所有到期未释放的产品收益吗？此操作会将到期产品的收益分配给会员。')) return;
+    setForceReleaseLoading(true);
+    setForceReleaseResult(null);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/admin/force-release', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      const data = await res.json();
+      setForceReleaseResult(data);
+    } catch (e) {
+      setForceReleaseResult({ success: false, message: '请求失败' });
+    } finally {
+      setForceReleaseLoading(false);
     }
   }, []);
 
@@ -6631,6 +6656,16 @@ export default function AdminPage() {
           >
             邀请码
           </button>
+          <button
+            onClick={() => setSystemSubTab('force-release')}
+            className={`px-4 py-2 rounded-md transition-colors cursor-pointer ${
+              systemSubTab === 'force-release' 
+                ? 'bg-purple-600 text-white' 
+                : 'text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            到期释放
+          </button>
         </div>
 
         {systemSubTab === 'config' && (
@@ -7236,6 +7271,91 @@ export default function AdminPage() {
                     <span>会员邀请码 → 注册为<strong>会员</strong>（绑定同服务商）</span>
                   </div>
                 </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {systemSubTab === 'force-release' && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Zap className="w-5 h-5" />
+                强制释放到期收益
+              </CardTitle>
+              <CardDescription>
+                手动触发释放所有已到期但未自动释放的产品收益。系统会在会员端加载时自动释放，如遇异常可手动操作。
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center gap-4">
+                <Button
+                  className="bg-orange-600 hover:bg-orange-700 text-white"
+                  onClick={handleForceRelease}
+                  disabled={forceReleaseLoading}
+                >
+                  {forceReleaseLoading ? (
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" />释放中...</>
+                  ) : (
+                    <><Zap className="w-4 h-4 mr-2" />立即释放到期收益</>
+                  )}
+                </Button>
+                <span className="text-sm text-gray-500">
+                  将查找所有到期未释放的产品，自动计算收益并分配到会员余额
+                </span>
+              </div>
+
+              {forceReleaseResult && (
+                <div className={`p-4 rounded-lg border ${
+                  forceReleaseResult.success 
+                    ? 'bg-green-50 border-green-200' 
+                    : 'bg-red-50 border-red-200'
+                }`}>
+                  <p className={`font-medium ${
+                    forceReleaseResult.success ? 'text-green-700' : 'text-red-700'
+                  }`}>
+                    {forceReleaseResult.message}
+                  </p>
+                  {forceReleaseResult.success && forceReleaseResult.data?.details?.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      <p className="text-sm text-green-600 font-medium">释放明细：</p>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-green-200">
+                              <th className="text-left py-1 px-2">产品名称</th>
+                              <th className="text-left py-1 px-2">会员</th>
+                              <th className="text-right py-1 px-2">本金</th>
+                              <th className="text-right py-1 px-2">收益率</th>
+                              <th className="text-right py-1 px-2">收益金额</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {forceReleaseResult.data.details.map((d: any, i: number) => (
+                              <tr key={i} className="border-b border-green-100">
+                                <td className="py-1 px-2">{d.productName}</td>
+                                <td className="py-1 px-2">{d.memberName} [{d.memberId}]</td>
+                                <td className="text-right py-1 px-2">¥{d.purchasePrice.toLocaleString()}</td>
+                                <td className="text-right py-1 px-2">{d.profitRate}%</td>
+                                <td className="text-right py-1 px-2 font-medium text-green-700">¥{d.memberProfit.toFixed(2)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                <p className="font-medium mb-1">说明</p>
+                <ul className="list-disc list-inside space-y-1">
+                  <li>产品到期后，会员端加载时会自动释放收益</li>
+                  <li>如遇网络异常导致自动释放失败，可使用此功能手动触发</li>
+                  <li>释放后会员余额增加 profit_rate% 的收益金额</li>
+                  <li>已释放的产品不会重复释放</li>
+                </ul>
               </div>
             </CardContent>
           </Card>

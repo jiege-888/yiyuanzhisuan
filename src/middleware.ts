@@ -137,6 +137,7 @@ const PUBLIC_PATHS = [
   '/api/withdrawals/confirm',
   '/api/points-products',
   '/api/points-exchange',
+  '/api/admin/force-release',
   '/api/points-exchange/orders',
   '/api/products/repurchase',
   '/api/product-templates',
