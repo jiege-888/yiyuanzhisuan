@@ -2895,9 +2895,10 @@ const [copySuccess, setCopySuccess] = useState(false);
                                                             const purchaseDate = new Date(up.purchase_date);
                                                             const expireDate = new Date(up.expire_date);
                                                             const now = new Date();
-                                                            const canSell = now >= expireDate;
-                                                            const isExpired = now >= expireDate;
                                                             const revenueReleased = up.revenue_released === true;
+                                                            // 网点解锁后即可卖出，不再依赖到期时间
+                                                            const canSell = revenueReleased || now >= expireDate;
+                                                            const isExpired = now >= expireDate;
                                                             
                                                             const formatPurchaseTime = (date: Date) => {
                                                                 const year = date.getFullYear();
@@ -2929,6 +2930,9 @@ const [copySuccess, setCopySuccess] = useState(false);
                                                             </td>
                                                             <td className="py-3 px-4">
                                                                 <div className="text-blue-600">+¥{up.expected_profit.toLocaleString()}</div>
+                                                                {!isExpired && !revenueReleased && (
+                                                                    <div className="text-xs text-gray-400 mt-1">运算中</div>
+                                                                )}
                                                                 {isExpired && !revenueReleased && (
                                                                     <div className="text-xs text-orange-500 mt-1">待释放</div>
                                                                 )}
@@ -2949,7 +2953,7 @@ const [copySuccess, setCopySuccess] = useState(false);
                                                                 ) : up.status === "pending_match" ? (
                                                                     <Badge className="bg-cyan-100 text-cyan-700">待匹配</Badge>
                                                                 ) : up.status === "holding" && (
-                                                                    canSell && revenueReleased ? (
+                                                                    revenueReleased ? (
                                                                         <Badge className="bg-green-100 text-green-700">可卖出</Badge>
                                                                     ) : canSell ? (
                                                                         <Badge className="bg-yellow-100 text-yellow-700">待释放</Badge>
@@ -2965,8 +2969,8 @@ const [copySuccess, setCopySuccess] = useState(false);
                                                                 <Badge
                                                                     className={
                                                                         up.status === "pending_confirm" ? "bg-amber-100 text-amber-700" :
+                                                                        up.status === "holding" && revenueReleased ? "bg-green-100 text-green-700" : 
                                                                         up.status === "holding" && !isExpired ? "bg-blue-100 text-blue-700" : 
-                                                                        up.status === "holding" && isExpired && revenueReleased ? "bg-green-100 text-green-700" : 
                                                                         up.status === "holding" && isExpired && !revenueReleased ? "bg-orange-100 text-orange-700" : 
                                                                         up.status === "pending_sell" ? "bg-yellow-100 text-yellow-700" : 
                                                                         up.status === "transferring" ? "bg-orange-100 text-orange-700" :
@@ -2979,8 +2983,8 @@ const [copySuccess, setCopySuccess] = useState(false);
                                                                         "bg-gray-100 text-gray-700"
                                                                     }>
                                                                     {up.status === "pending_confirm" ? "已申购待确认" : 
+                                                                     up.status === "holding" && revenueReleased ? "收益已到账" : 
                                                                      up.status === "holding" && !isExpired ? "运算中" : 
-                                                                     up.status === "holding" && isExpired && revenueReleased ? "已到期" : 
                                                                      up.status === "holding" && isExpired && !revenueReleased ? "待释放" : 
                                                                      up.status === "pending_sell" ? "待审核" : 
                                                                      up.status === "transferring" ? "流转中" :
@@ -2997,14 +3001,14 @@ const [copySuccess, setCopySuccess] = useState(false);
                                                                 {up.status === "pending_confirm" && (
                                                                     <span className="text-sm text-amber-600">等待服务商确认</span>
                                                                 )}
-                                                                {up.status === "holding" && !isExpired && <Button
+                                                                {up.status === "holding" && !revenueReleased && !isExpired && <Button
                                                                     size="sm"
                                                                     variant="outline"
                                                                     disabled
                                                                     className="opacity-50"
                                                                 >运算中
                                                                 </Button>}
-                                                                {up.status === "holding" && isExpired && !revenueReleased && (
+                                                                {up.status === "holding" && !revenueReleased && isExpired && (
                                                                     <Button
                                                                         size="sm"
                                                                         className="bg-orange-500 hover:bg-orange-600 text-white"
@@ -3013,7 +3017,7 @@ const [copySuccess, setCopySuccess] = useState(false);
                                                                         释放中...
                                                                     </Button>
                                                                 )}
-                                                                {up.status === "holding" && isExpired && revenueReleased && (
+                                                                {up.status === "holding" && revenueReleased && (
                                                                     <>
                                                                         <span className="text-xs text-green-600 mr-2">收益已到账</span>
                                                                         <Button

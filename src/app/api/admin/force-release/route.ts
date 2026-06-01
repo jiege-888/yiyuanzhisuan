@@ -112,11 +112,10 @@ export async function POST(request: Request) {
         });
       }
       
-      // 标记已释放+已解锁
-      await supabase.from('user_products').update({
-        revenue_released: true,
-        unlock_time: new Date().toISOString()
-      }).eq('id', up.id);
+      // 标记已释放+已解锁（用rpc_query确保写入）
+      await supabase.rpc('rpc_query', {
+        sql_query: `UPDATE user_products SET revenue_released = true, updated_at = NOW() WHERE id = '${up.id}'`
+      });
       
       // 写入通知
       await supabase.from('notifications').insert({

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { getSupabaseUrl, getSupabaseServiceRoleKey } from '@/lib/env';
+import { execute as pgExecute } from '@/lib/supabase-client';
 
 // 解锁产品并释放收益（网点端操作：解锁即收益到账）
 export async function POST(request: Request) {
@@ -71,81 +72,95 @@ export async function POST(request: Request) {
       const branchShare = purchasePrice * 0.1 / 100;     // 网点0.1%
       const companyShare = purchasePrice * 0.4 / 100;    // 公司0.4%
 
-      // 1. 会员2% → balance
-      const { data: memberData } = await supabase.from('users').select('balance').eq('id', up.user_id).single();
-      if (memberData) {
-        await supabase.from('users').update({ balance: (Number(memberData.balance) || 0) + memberShare }).eq('id', up.user_id);
+      // 1. 会员2% → balance（用SQL直接执行，避免静默失败）
+      try {
+        await pgExecute(`UPDATE users SET balance = COALESCE(balance, 0) + ${memberShare} WHERE id = '${up.user_id}'`);
+      } catch (e) {
+        console.error('更新会员balance失败:', e);
       }
 
       // 2. 服务商2% → balance
       if (productInfo.provider_id) {
-        const { data: provData } = await supabase.from('users').select('balance').eq('id', productInfo.provider_id).single();
-        if (provData) {
-          await supabase.from('users').update({ balance: (Number(provData.balance) || 0) + providerShare }).eq('id', productInfo.provider_id);
+        try {
+          await pgExecute(`UPDATE users SET balance = COALESCE(balance, 0) + ${providerShare} WHERE id = '${productInfo.provider_id}'`);
+        } catch (e) {
+          console.error('更新服务商balance失败:', e);
         }
       }
 
       // 3. 直推0.25% → balance
       if (memberInfo.inviter_id) {
-        const { data: inviterData } = await supabase.from('users').select('balance').eq('id', memberInfo.inviter_id).single();
-        if (inviterData) {
-          await supabase.from('users').update({ balance: (Number(inviterData.balance) || 0) + inviterShare }).eq('id', memberInfo.inviter_id);
+        try {
+          await pgExecute(`UPDATE users SET balance = COALESCE(balance, 0) + ${inviterShare} WHERE id = '${memberInfo.inviter_id}'`);
+        } catch (e) {
+          console.error('更新直推人balance失败:', e);
         }
       }
 
-      // 4. 上级服务商0.25% → balance
+      // 4. 上级服务商0.25% → balance（memberInfo.provider_id 是该会员所属的服务商）
       if (memberInfo.provider_id) {
-        const { data: upProvData } = await supabase.from('users').select('balance').eq('id', memberInfo.provider_id).single();
-        if (upProvData) {
-          await supabase.from('users').update({ balance: (Number(upProvData.balance) || 0) + upProviderShare }).eq('id', memberInfo.provider_id);
+        try {
+          await pgExecute(`UPDATE users SET balance = COALESCE(balance, 0) + ${upProviderShare} WHERE id = '${memberInfo.provider_id}'`);
+        } catch (e) {
+          console.error('更新上级服务商balance失败:', e);
         }
       }
 
       // 5. 网点0.1% → balance（查该服务商所属分公司）
       if (productInfo.provider_id) {
-        const { data: providerRecord } = await supabase.from('providers').select('branch_id').eq('user_id', productInfo.provider_id).single();
+        const { data: providerRecord } = await supabase.from('providers').select('branch_id').eq('user_id', productInfo.provider_id).maybeSingle();
         if (providerRecord?.branch_id) {
-          const { data: branchData } = await supabase.from('users').select('balance').eq('id', providerRecord.branch_id).single();
-          if (branchData) {
-            await supabase.from('users').update({ balance: (Number(branchData.balance) || 0) + branchShare }).eq('id', providerRecord.branch_id);
+          try {
+            await pgExecute(`UPDATE users SET balance = COALESCE(balance, 0) + ${branchShare} WHERE id = '${providerRecord.branch_id}'`);
+          } catch (e) {
+            console.error('更新网点balance失败:', e);
           }
         }
       }
 
       // 6. 公司0.4% → balance（admin用户）
-      const { data: adminData } = await supabase.from('users').select('id, balance').eq('role', 'admin').limit(1).single();
+      const { data: adminData } = await supabase.from('users').select('id').eq('role', 'admin').limit(1).maybeSingle();
       if (adminData) {
-        await supabase.from('users').update({ balance: (Number(adminData.balance) || 0) + companyShare }).eq('id', adminData.id);
+        try {
+          await pgExecute(`UPDATE users SET balance = COALESCE(balance, 0) + ${companyShare} WHERE id = '${adminData.id}'`);
+        } catch (e) {
+          console.error('更新公司balance失败:', e);
+        }
       }
 
-      // 更新 user_products: 标记收益已释放
-      await supabase
-        .from('user_products')
-        .update({ revenue_released: true })
-        .eq('id', up.id);
+      // 关键步骤：更新 user_products.revenue_released = true（用SQL直接执行）
+      try {
+        await pgExecute(`UPDATE user_products SET revenue_released = true WHERE id = '${up.id}'`);
+      } catch (e) {
+        console.error('更新revenue_released失败:', e);
+      }
 
       // 写入收益释放记录
-      try { await supabase.from('release_records').insert({
-        user_product_id: up.id,
-        user_id: up.user_id,
-        product_id: up.product_id,
-        total_release_amount: totalReleaseAmount,
-        member_share: memberShare,
-        provider_share: providerShare,
-        inviter_share: inviterShare,
-        up_provider_share: upProviderShare,
-        branch_share: branchShare,
-        company_share: companyShare,
-        released_at: new Date().toISOString()
-      }); } catch (_e) { /* 表不存在则忽略 */ }
+      try {
+        await supabase.from('release_records').insert({
+          user_product_id: up.id,
+          user_id: up.user_id,
+          product_id: up.product_id,
+          total_release_amount: totalReleaseAmount,
+          member_share: memberShare,
+          provider_share: providerShare,
+          inviter_share: inviterShare,
+          up_provider_share: upProviderShare,
+          branch_share: branchShare,
+          company_share: companyShare,
+          released_at: new Date().toISOString()
+        });
+      } catch (_e) { /* 表不存在则忽略 */ }
 
       // 通知会员
-      await supabase.from('notifications').insert({
-        user_id: up.user_id,
-        type: 'revenue',
-        title: '收益已到账',
-        content: `您持有的产品 ${productInfo.name || ''} 已解锁，收益 ¥${memberShare.toFixed(2)} 已到账余额，产品可卖出`
-      });
+      try {
+        await supabase.from('notifications').insert({
+          user_id: up.user_id,
+          type: 'revenue',
+          title: '收益已到账',
+          content: `您持有的产品 ${productInfo.name || ''} 已解锁，收益 ¥${memberShare.toFixed(2)} 已到账余额，产品可卖出`
+        });
+      } catch (_e) { /* 忽略 */ }
 
       distributionDetails.push({
         userProductId: up.id,

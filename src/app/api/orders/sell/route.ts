@@ -33,11 +33,12 @@ export async function POST(request: NextRequest) {
       [userProduct.product_id]
     );
 
-    // 持仓时间锁检查 - 直接比较当前时间与到期时间
+    // 持仓时间锁检查 - 如果收益已释放（网点已解锁），则跳过时间锁
+    // 网点随时可以解锁，解锁后即可卖出
     const expireDate = new Date(userProduct.expire_date);
     const now = new Date();
 
-    if (now < expireDate) {
+    if (!userProduct.revenue_released && now < expireDate) {
       const remainingMs = expireDate.getTime() - now.getTime();
       const remainingHours = Math.ceil(remainingMs / (1000 * 60 * 60));
       const remainingDays = Math.floor(remainingHours / 24);
