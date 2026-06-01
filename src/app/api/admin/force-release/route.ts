@@ -1,165 +1,142 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { execute as pgExecute } from '@/lib/supabase-client';
-import { getSupabaseUrl, getSupabaseServiceRoleKey } from '@/lib/env';
+import { addEnergyValue, setRevenueReleased } from '@/lib/energy-utils';
 
-// 管理员一键释放所有到期产品收益（调用5%智算金分配逻辑）
-// 智算金写入 energy_value（前端"智算金"显示的就是energy_value）
+export const dynamic = 'force-dynamic';
+
+function getSupabaseClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '';
+  const key = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+  return createClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false },
+    global: { headers: { 'Prefer': 'return=representation', 'Cache-Control': 'no-cache' } },
+  });
+}
+
 export async function POST(request: Request) {
   try {
-    const body = await request.json().catch(() => ({}));
-    const { providerId } = body;
+    const body = await request.json();
+    const { providerId, adminKey } = body;
 
-    const url = getSupabaseUrl();
-    const key = getSupabaseServiceRoleKey();
-    const supabase = createClient(url, key);
-    const now = new Date().toISOString();
+    if (adminKey !== 'admin2024') {
+      return NextResponse.json({ success: false, message: '无效的管理密钥' }, { status: 403 });
+    }
 
-    // 查询到期未释放的产品
-    let query = supabase
+    const sb = getSupabaseClient();
+
+    // 获取所有未释放的持仓
+    let query = sb
       .from('user_products')
-      .select('id, user_id, product_id, purchase_price, expire_date, revenue_released, status')
-      .eq('status', 'holding')
-      .lt('expire_date', now)
-      .eq('revenue_released', false);
+      .select('id, user_id, product_id, purchase_price, revenue_released, status')
+      .eq('revenue_released', false)
+      .eq('status', 'holding');
 
+    const { data: userProducts, error: upErr } = await query;
+
+    if (upErr || !userProducts || userProducts.length === 0) {
+      return NextResponse.json({ success: true, message: '没有需要释放的产品', data: { released: 0 } });
+    }
+
+    // 如果指定了providerId，需要过滤
+    let filteredProducts = userProducts;
     if (providerId) {
-      // 通过产品关联筛选服务商
-      const { data: providerProducts } = await supabase
+      const { data: providerProducts } = await sb
         .from('products')
         .select('id')
         .eq('provider_id', providerId);
-
-      if (providerProducts && providerProducts.length > 0) {
-        const productIds = providerProducts.map(p => p.id);
-        query = query.in('product_id', productIds);
-      } else {
-        return NextResponse.json({ success: true, message: '该服务商没有到期产品', data: { releasedCount: 0, details: [] } });
-      }
+      const providerProductIds = new Set((providerProducts || []).map((p: { id: string }) => p.id));
+      filteredProducts = userProducts.filter((up: { product_id: string }) => providerProductIds.has(up.product_id));
     }
 
-    const { data: expiredProducts, error } = await query;
-    if (error) throw error;
-
-    if (!expiredProducts || expiredProducts.length === 0) {
-      return NextResponse.json({ success: true, message: '没有需要释放的到期产品', data: { releasedCount: 0, details: [] } });
+    if (filteredProducts.length === 0) {
+      return NextResponse.json({ success: true, message: '该服务商下没有需要释放的产品', data: { released: 0 } });
     }
+
+    // 获取产品信息
+    const productIds = filteredProducts.map((up: { product_id: string }) => up.product_id);
+    const { data: products } = await sb
+      .from('products')
+      .select('id, name, price, provider_id')
+      .in('id', productIds);
+    const productMap = new Map<string, any>((products || []).map((p: any) => [p.id, p]));
+
+    // 获取用户信息
+    const userIds = [...new Set(filteredProducts.map((up: { user_id: string }) => up.user_id))];
+    const { data: usersData } = await sb
+      .from('users')
+      .select('id, username, role, provider_id, inviter_id, branch_id')
+      .in('id', userIds);
+    const userMap = new Map<string, any>((usersData || []).map((u: any) => [u.id, u]));
+
+    // 获取admin
+    const { data: adminUsers } = await sb
+      .from('users')
+      .select('id')
+      .eq('role', 'admin')
+      .limit(1);
+    const adminUser = adminUsers?.[0];
 
     let releasedCount = 0;
-    const details: { userName: string; productName: string; amount: number }[] = [];
-    const errors: string[] = [];
 
-    for (const up of expiredProducts) {
-      // 获取产品信息
-      const { data: product } = await supabase.from('products').select('id, name, price, profit_rate, market_rate, period, provider_id').eq('id', up.product_id).single();
+    for (const up of filteredProducts) {
+      const product = productMap.get(up.product_id);
       if (!product) continue;
 
-      // 获取会员信息
-      const { data: member } = await supabase.from('users').select('id, username, real_name, inviter_id, provider_id').eq('id', up.user_id).single();
-      if (!member) continue;
+      const holder = userMap.get(up.user_id);
+      const productPrice = Number(product.price) || Number(up.purchase_price) || 0;
 
-      const purchasePrice = Number(up.purchase_price);
-      const totalReleaseRate = 5; // 总释放5%
-      const releaseAmount = purchasePrice * totalReleaseRate / 100;
+      // 5% 分配
+      const memberShare = Math.round(productPrice * 0.02 * 100) / 100;
+      const providerShare = Math.round(productPrice * 0.02 * 100) / 100;
+      const inviterShare = Math.round(productPrice * 0.0025 * 100) / 100;
+      const upstreamShare = Math.round(productPrice * 0.0025 * 100) / 100;
+      const branchShare = Math.round(productPrice * 0.001 * 100) / 100;
+      const companyShare = Math.round(productPrice * 0.004 * 100) / 100;
 
-      // 分配5%智算金 → 全部写入 energy_value
-      const memberShare = purchasePrice * 2 / 100;
-      const providerShare = purchasePrice * 2 / 100;
-      const inviterShare = purchasePrice * 0.25 / 100;
-      const upstreamShare = purchasePrice * 0.25 / 100;
-      const branchShare = purchasePrice * 0.1 / 100;
-      const companyShare = purchasePrice * 0.4 / 100;
-
-      // 1. 会员 +2% → energy_value
-      try {
-        await pgExecute(`UPDATE users SET energy_value = COALESCE(energy_value, 0) + ${memberShare} WHERE id = '${member.id}'`);
-      } catch (e) {
-        console.error('[force-release] 更新会员energy_value失败:', e);
-        errors.push(`会员${member.username}智算金更新失败`);
-      }
-
-      // 2. 服务商 +2% → energy_value
+      // 会员 +2%
+      await addEnergyValue(up.user_id, memberShare, '强制释放-会员');
+      // 服务商 +2%
       if (product.provider_id) {
-        try {
-          await pgExecute(`UPDATE users SET energy_value = COALESCE(energy_value, 0) + ${providerShare} WHERE id = '${product.provider_id}'`);
-        } catch (e) {
-          console.error('[force-release] 更新服务商energy_value失败:', e);
-          errors.push('服务商智算金更新失败');
-        }
+        await addEnergyValue(product.provider_id, providerShare, '强制释放-服务商');
       }
-
-      // 3. 直推人 +0.25% → energy_value
-      if (member.inviter_id) {
-        try {
-          await pgExecute(`UPDATE users SET energy_value = COALESCE(energy_value, 0) + ${inviterShare} WHERE id = '${member.inviter_id}'`);
-        } catch (e) {
-          console.error('[force-release] 更新直推人energy_value失败:', e);
-        }
+      // 直推 +0.25%
+      if (holder?.inviter_id) {
+        await addEnergyValue(holder.inviter_id, inviterShare, '强制释放-直推');
       }
-
-      // 4. 上级服务商 +0.25% → energy_value
-      if (member.provider_id && member.provider_id !== product.provider_id) {
-        try {
-          await pgExecute(`UPDATE users SET energy_value = COALESCE(energy_value, 0) + ${upstreamShare} WHERE id = '${member.provider_id}'`);
-        } catch (e) {
-          console.error('[force-release] 更新上级服务商energy_value失败:', e);
-        }
+      // 网点 +0.1%
+      if (holder?.branch_id) {
+        await addEnergyValue(holder.branch_id, branchShare, '强制释放-网点');
       }
-
-      // 5. 网点 +0.1% → energy_value
-      const { data: providerUser } = await supabase.from('providers').select('branch_id').eq('user_id', product.provider_id).maybeSingle();
-      if (providerUser?.branch_id) {
-        try {
-          await pgExecute(`UPDATE users SET energy_value = COALESCE(energy_value, 0) + ${branchShare} WHERE id = '${providerUser.branch_id}'`);
-        } catch (e) {
-          console.error('[force-release] 更新网点energy_value失败:', e);
-        }
-      }
-
-      // 6. 公司运营 +0.4% → energy_value
-      const { data: adminUser } = await supabase.from('users').select('id').eq('role', 'admin').limit(1).maybeSingle();
+      // 公司 +0.4%
       if (adminUser) {
-        try {
-          await pgExecute(`UPDATE users SET energy_value = COALESCE(energy_value, 0) + ${companyShare} WHERE id = '${adminUser.id}'`);
-        } catch (e) {
-          console.error('[force-release] 更新公司energy_value失败:', e);
+        await addEnergyValue(adminUser.id, companyShare, '强制释放-公司');
+      }
+      // 上级服务商 +0.25%
+      if (product.provider_id) {
+        const { data: provUser } = await sb
+          .from('users')
+          .select('inviter_id')
+          .eq('id', product.provider_id)
+          .single();
+        if (provUser?.inviter_id) {
+          await addEnergyValue(provUser.inviter_id, upstreamShare, '强制释放-上级服务商');
         }
       }
 
-      // 标记已释放（用pgExecute确保写入）
-      try {
-        await pgExecute(`UPDATE user_products SET revenue_released = true, updated_at = NOW() WHERE id = '${up.id}'`);
-      } catch (e) {
-        console.error('[force-release] 更新revenue_released失败:', e);
-        errors.push(`产品状态更新失败`);
-      }
-
-      // 写入通知
-      try {
-        await supabase.from('notifications').insert({
-          user_id: member.id,
-          type: 'revenue',
-          title: '产品收益已到账',
-          content: `您的产品${product.name}已到期，收益¥${memberShare.toFixed(2)}已到账智算金，可以卖出提现`
-        });
-      } catch (_e) { /* 忽略 */ }
-
-      details.push({
-        userName: member.real_name || member.username,
-        productName: product.name,
-        amount: memberShare
-      });
-      releasedCount++;
+      // 标记已释放
+      const ok = await setRevenueReleased(up.id, true);
+      if (ok) releasedCount++;
     }
 
     return NextResponse.json({
       success: true,
-      message: `成功释放${releasedCount}个到期产品收益`,
-      data: { releasedCount, totalAmount: details.reduce((s, d) => s + d.amount, 0), details },
-      errors: errors.length > 0 ? errors : undefined
+      message: `已强制释放 ${releasedCount} 个产品的收益`,
+      data: { released: releasedCount },
     });
-  } catch (error: any) {
-    console.error('[force-release] 释放失败:', error);
-    return NextResponse.json({ success: false, message: error.message }, { status: 500 });
+
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error('[force-release] Error:', msg);
+    return NextResponse.json({ success: false, message: '释放失败: ' + msg }, { status: 500 });
   }
 }

@@ -1,215 +1,256 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { getSupabaseUrl, getSupabaseServiceRoleKey } from '@/lib/env';
-import { execute as pgExecute } from '@/lib/supabase-client';
+import { addEnergyValue, setRevenueReleased } from '@/lib/energy-utils';
 
-// 解锁产品并释放收益（网点端操作：解锁即收益到账）
+export const dynamic = 'force-dynamic';
+
+function getSupabaseClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '';
+  const key = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+  return createClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false },
+    global: { headers: { 'Prefer': 'return=representation', 'Cache-Control': 'no-cache' } },
+  });
+}
+
+/**
+ * 5%智算金分配规则：
+ * - 会员: 2% (profit_rate对应的实际收益)
+ * - 服务商: 2%
+ * - 直推人: 0.25%
+ * - 上级服务商: 0.25%
+ * - 网点(分公司): 0.1%
+ * - 公司(运营): 0.4%
+ */
+interface DistributionResult {
+  userId: string;
+  role: string;
+  amount: number;
+  description: string;
+  success: boolean;
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { userProductIds } = body; // 支持批量：数组
+    const { userProductIds } = body;
 
     if (!userProductIds || !Array.isArray(userProductIds) || userProductIds.length === 0) {
-      return NextResponse.json({ success: false, message: '缺少userProductIds' }, { status: 400 });
+      return NextResponse.json({ success: false, message: '请选择要解锁的产品' }, { status: 400 });
     }
 
-    const url = getSupabaseUrl();
-    const key = getSupabaseServiceRoleKey();
-    const supabase = createClient(url, key);
+    const sb = getSupabaseClient();
 
-    // 查询要解锁的产品
-    const { data: userProducts, error: queryError } = await supabase
+    // 1. 获取待解锁的持仓记录
+    const { data: userProducts, error: upErr } = await sb
       .from('user_products')
-      .select('id, user_id, product_id, purchase_price, revenue_released, status')
+      .select('id, user_id, product_id, purchase_price, expected_profit, market_fee, revenue_released, status')
       .in('id', userProductIds)
-      .eq('status', 'holding');
+      .eq('revenue_released', false);
 
-    if (queryError) {
-      return NextResponse.json({ success: false, message: '查询产品失败' }, { status: 500 });
-    }
-
-    if (!userProducts || userProducts.length === 0) {
+    if (upErr || !userProducts || userProducts.length === 0) {
       return NextResponse.json({ success: false, message: '未找到可解锁的产品' }, { status: 404 });
     }
 
-    // 过滤已释放的
-    const toRelease = userProducts.filter((up: any) => !up.revenue_released);
-    if (toRelease.length === 0) {
-      return NextResponse.json({ success: true, message: '所有产品已解锁', unlockedCount: 0 });
+    const productIds = userProducts.map((up: { product_id: string }) => up.product_id);
+    
+    // 2. 获取产品信息
+    const { data: products } = await sb
+      .from('products')
+      .select('id, name, price, period, total_rate, market_rate, profit_rate, provider_id')
+      .in('id', productIds);
+
+    const productMap = new Map<string, any>((products || []).map((p: any) => [p.id, p]));
+
+    // 3. 获取所有相关的用户信息
+    const userIds = new Set<string>();
+    const providerIds = new Set<string>();
+    
+    for (const up of userProducts) {
+      userIds.add(up.user_id);
+      const product = productMap.get(up.product_id);
+      if (product?.provider_id) providerIds.add(product.provider_id);
     }
 
-    let unlockedCount = 0;
-    const distributionDetails: any[] = [];
-    const errors: string[] = [];
+    const allUserIds = [...userIds, ...providerIds];
+    const { data: users } = await sb
+      .from('users')
+      .select('id, username, role, provider_id, inviter_id, branch_id, energy_value')
+      .in('id', allUserIds);
 
-    for (const up of toRelease) {
-      const purchasePrice = Number(up.purchase_price);
+    const userMap = new Map<string, any>((users || []).map((u: any) => [u.id, u]));
 
-      // 获取产品信息
-      const { data: productInfo } = await supabase
-        .from('products')
-        .select('id, name, code, price, period, profit_rate, market_rate, provider_id')
-        .eq('id', up.product_id)
-        .single();
+    // 4. 获取服务商的上级服务商信息
+    const providerUserIds = [...providerIds];
+    const { data: providers } = await sb
+      .from('providers')
+      .select('user_id, id')
+      .in('user_id', providerUserIds);
 
-      if (!productInfo) {
-        errors.push(`产品 ${up.product_id} 不存在`);
-        continue;
-      }
+    const providerMap = new Map((providers || []).map((p: { user_id: string }) => [p.user_id, p]));
 
-      // 获取会员信息
-      const { data: memberInfo } = await supabase
+    // 获取上级服务商（providers表的上级）
+    const { data: allProviders } = await sb
+      .from('providers')
+      .select('user_id, id');
+
+    const allProviderMap = new Map<string, any>((allProviders || []).map((p: any) => [p.user_id, p]));
+
+    // 获取分公司用户信息
+    const branchIds = new Set<string>();
+    for (const u of users || []) {
+      if (u.branch_id) branchIds.add(u.branch_id);
+    }
+    
+    let branchUsers: { id: string; username: string }[] = [];
+    if (branchIds.size > 0) {
+      const { data: bUsers } = await sb
         .from('users')
-        .select('id, username, unique_id, phone, inviter_id, provider_id')
-        .eq('id', up.user_id)
-        .single();
+        .select('id, username')
+        .in('id', [...branchIds]);
+      branchUsers = bUsers || [];
+    }
+    const branchUserMap = new Map<string, any>(branchUsers.map((u: any) => [u.id, u]));
 
-      if (!memberInfo) {
-        errors.push(`用户 ${up.user_id} 不存在`);
+    // 获取admin用户
+    const { data: adminUsers } = await sb
+      .from('users')
+      .select('id, username')
+      .eq('role', 'admin')
+      .limit(1);
+    const adminUser = adminUsers?.[0];
+
+    // 5. 逐个处理解锁
+    const results: DistributionResult[] = [];
+    const distributionLog: string[] = [];
+    let successCount = 0;
+
+    for (const up of userProducts) {
+      const product = productMap.get(up.product_id);
+      if (!product) {
+        distributionLog.push(`产品不存在: ${up.product_id}`);
         continue;
       }
 
-      // === 5%智算金分配 ===
-      // 产品价值的5%作为智算金释放
-      const totalReleaseRate = 5;
-      const totalReleaseAmount = purchasePrice * totalReleaseRate / 100;
-      const memberShare = purchasePrice * 2 / 100;       // 会员2%
-      const providerShare = purchasePrice * 2 / 100;     // 服务商2%
-      const inviterShare = purchasePrice * 0.25 / 100;   // 直推0.25%
-      const upProviderShare = purchasePrice * 0.25 / 100; // 上级服务商0.25%
-      const branchShare = purchasePrice * 0.1 / 100;     // 网点0.1%
-      const companyShare = purchasePrice * 0.4 / 100;    // 公司0.4%
+      const purchasePrice = Number(up.purchase_price) || 0;
+      const productPrice = Number(product.price) || purchasePrice;
+      
+      // 5% 智算金 = 产品价格 × 5%
+      const revenue5pct = productPrice * 0.05;
+      
+      // 分配金额
+      const memberShare = Math.round(productPrice * 0.02 * 100) / 100;    // 2%
+      const providerShare = Math.round(productPrice * 0.02 * 100) / 100;  // 2%
+      const inviterShare = Math.round(productPrice * 0.0025 * 100) / 100; // 0.25%
+      const upstreamShare = Math.round(productPrice * 0.0025 * 100) / 100; // 0.25%
+      const branchShare = Math.round(productPrice * 0.001 * 100) / 100;   // 0.1%
+      const companyShare = Math.round(productPrice * 0.004 * 100) / 100;  // 0.4%
 
-      // 1. 会员2% → energy_value（智算金，用户前端显示的"智算金"就是energy_value）
-      try {
-        const result1 = await pgExecute(`UPDATE users SET energy_value = COALESCE(energy_value, 0) + ${memberShare} WHERE id = '${up.user_id}'`);
-        console.log(`[unlock] 会员 ${memberInfo.username} energy_value +${memberShare}, result:`, JSON.stringify(result1));
-      } catch (e) {
-        console.error('[unlock] 更新会员energy_value失败:', e);
-        errors.push(`会员 ${memberInfo.username} 智算金更新失败`);
+      const holder = userMap.get(up.user_id);
+      const provider = product.provider_id ? userMap.get(product.provider_id) : null;
+
+      // (1) 会员 +2%
+      if (holder) {
+        const r = await addEnergyValue(holder.id, memberShare, `解锁收益-会员${holder.username}`);
+        results.push({ userId: holder.id, role: 'member', amount: memberShare, description: `会员${holder.username}`, success: r !== null });
       }
 
-      // 2. 服务商2% → energy_value（服务商的智算金也是energy_value）
-      if (productInfo.provider_id) {
-        try {
-          const result2 = await pgExecute(`UPDATE users SET energy_value = COALESCE(energy_value, 0) + ${providerShare} WHERE id = '${productInfo.provider_id}'`);
-          console.log(`[unlock] 服务商 energy_value +${providerShare}, result:`, JSON.stringify(result2));
-        } catch (e) {
-          console.error('[unlock] 更新服务商energy_value失败:', e);
-          errors.push(`服务商智算金更新失败`);
+      // (2) 服务商 +2%
+      if (provider) {
+        const r = await addEnergyValue(provider.id, providerShare, `解锁收益-服务商${provider.username}`);
+        results.push({ userId: provider.id, role: 'provider', amount: providerShare, description: `服务商${provider.username}`, success: r !== null });
+      }
+
+      // (3) 直推人 +0.25%
+      if (holder?.inviter_id) {
+        const inviter = userMap.get(holder.inviter_id);
+        if (inviter) {
+          const r = await addEnergyValue(inviter.id, inviterShare, `解锁收益-直推${inviter.username}`);
+          results.push({ userId: inviter.id, role: 'inviter', amount: inviterShare, description: `直推${inviter.username}`, success: r !== null });
         }
       }
 
-      // 3. 直推0.25% → energy_value
-      if (memberInfo.inviter_id) {
-        try {
-          const result3 = await pgExecute(`UPDATE users SET energy_value = COALESCE(energy_value, 0) + ${inviterShare} WHERE id = '${memberInfo.inviter_id}'`);
-          console.log(`[unlock] 直推人 energy_value +${inviterShare}, result:`, JSON.stringify(result3));
-        } catch (e) {
-          console.error('[unlock] 更新直推人energy_value失败:', e);
-          errors.push(`直推人智算金更新失败`);
-        }
-      }
-
-      // 4. 上级服务商0.25% → energy_value（memberInfo.provider_id 是该会员所属的服务商）
-      // 注意：productInfo.provider_id 是产品所属服务商，和 memberInfo.provider_id 可能相同
-      // 上级服务商应该是服务商的上级（如果有），否则就是产品所属服务商
-      if (memberInfo.provider_id && memberInfo.provider_id !== productInfo.provider_id) {
-        try {
-          const result4 = await pgExecute(`UPDATE users SET energy_value = COALESCE(energy_value, 0) + ${upProviderShare} WHERE id = '${memberInfo.provider_id}'`);
-          console.log(`[unlock] 上级服务商 energy_value +${upProviderShare}, result:`, JSON.stringify(result4));
-        } catch (e) {
-          console.error('[unlock] 更新上级服务商energy_value失败:', e);
-          errors.push(`上级服务商智算金更新失败`);
-        }
-      }
-
-      // 5. 网点0.1% → energy_value（查该服务商所属分公司）
-      if (productInfo.provider_id) {
-        const { data: providerRecord } = await supabase.from('providers').select('branch_id').eq('user_id', productInfo.provider_id).maybeSingle();
-        if (providerRecord?.branch_id) {
-          try {
-            const result5 = await pgExecute(`UPDATE users SET energy_value = COALESCE(energy_value, 0) + ${branchShare} WHERE id = '${providerRecord.branch_id}'`);
-            console.log(`[unlock] 网点 energy_value +${branchShare}, result:`, JSON.stringify(result5));
-          } catch (e) {
-            console.error('[unlock] 更新网点energy_value失败:', e);
-            errors.push(`网点智算金更新失败`);
+      // (4) 上级服务商 +0.25%
+      if (provider) {
+        const providerRecord = providerMap.get(provider.id);
+        // 查找该服务商的上级服务商
+        const providerUser = userMap.get(provider.id);
+        if (providerUser?.inviter_id) {
+          const inviterUser = userMap.get(providerUser.inviter_id);
+          if (inviterUser && (inviterUser.role === 'provider' || allProviderMap.has(inviterUser.id))) {
+            const r = await addEnergyValue(inviterUser.id, upstreamShare, `解锁收益-上级服务商${inviterUser.username}`);
+            results.push({ userId: inviterUser.id, role: 'upstream_provider', amount: upstreamShare, description: `上级服务商${inviterUser.username}`, success: r !== null });
           }
         }
       }
 
-      // 6. 公司0.4% → energy_value（admin用户）
-      const { data: adminData } = await supabase.from('users').select('id').eq('role', 'admin').limit(1).maybeSingle();
-      if (adminData) {
-        try {
-          const result6 = await pgExecute(`UPDATE users SET energy_value = COALESCE(energy_value, 0) + ${companyShare} WHERE id = '${adminData.id}'`);
-          console.log(`[unlock] 公司 energy_value +${companyShare}, result:`, JSON.stringify(result6));
-        } catch (e) {
-          console.error('[unlock] 更新公司energy_value失败:', e);
-          errors.push(`公司智算金更新失败`);
+      // (5) 网点(分公司) +0.1%
+      if (holder?.branch_id) {
+        const branchUser = branchUserMap.get(holder.branch_id);
+        if (branchUser) {
+          const r = await addEnergyValue(holder.branch_id, branchShare, `解锁收益-网点${branchUser.username}`);
+          results.push({ userId: holder.branch_id, role: 'branch', amount: branchShare, description: `网点${branchUser.username}`, success: r !== null });
         }
       }
 
-      // 关键步骤：更新 user_products.revenue_released = true
-      try {
-        const result7 = await pgExecute(`UPDATE user_products SET revenue_released = true WHERE id = '${up.id}'`);
-        console.log(`[unlock] user_products ${up.id} revenue_released = true, result:`, JSON.stringify(result7));
-      } catch (e) {
-        console.error('[unlock] 更新revenue_released失败:', e);
-        errors.push(`产品状态更新失败`);
+      // (6) 公司运营 +0.4%
+      if (adminUser) {
+        const r = await addEnergyValue(adminUser.id, companyShare, `解锁收益-公司运营`);
+        results.push({ userId: adminUser.id, role: 'admin', amount: companyShare, description: '公司运营', success: r !== null });
       }
 
-      // 写入收益释放记录
-      try {
-        await supabase.from('release_records').insert({
-          user_product_id: up.id,
-          user_id: up.user_id,
-          product_id: up.product_id,
-          total_release_amount: totalReleaseAmount,
-          member_share: memberShare,
-          provider_share: providerShare,
-          inviter_share: inviterShare,
-          up_provider_share: upProviderShare,
-          branch_share: branchShare,
-          company_share: companyShare,
-          released_at: new Date().toISOString()
-        });
-      } catch (_e) { /* 表不存在则忽略 */ }
+      // (7) 标记为已释放
+      const releaseOk = await setRevenueReleased(up.id, true);
+      
+      if (releaseOk) {
+        successCount++;
+        distributionLog.push(
+          `${product.name} ¥${productPrice}: 会员+${memberShare}, 服务商+${providerShare}, ` +
+          `直推+${inviterShare}, 上级+${upstreamShare}, 网点+${branchShare}, 公司+${companyShare}`
+        );
+      } else {
+        distributionLog.push(`${product.name}: 标记revenue_released失败`);
+      }
 
-      // 通知会员
-      try {
-        await supabase.from('notifications').insert({
-          user_id: up.user_id,
-          type: 'revenue',
-          title: '收益已到账',
-          content: `您持有的产品 ${productInfo.name || ''} 已解锁，收益 ¥${memberShare.toFixed(2)} 已到账智算金，产品可卖出`
-        });
-      } catch (_e) { /* 忽略 */ }
-
-      distributionDetails.push({
-        userProductId: up.id,
-        purchasePrice,
-        totalReleaseAmount,
-        memberShare,
-        providerShare,
-        inviterShare,
-        upProviderShare,
-        branchShare,
-        companyShare
+      // (8) 写入分配记录
+      await sb.from('release_records').insert({
+        user_product_id: up.id,
+        user_id: up.user_id,
+        product_id: up.product_id,
+        purchase_price: purchasePrice,
+        revenue_5pct: revenue5pct,
+        member_share: memberShare,
+        provider_share: providerShare,
+        inviter_share: inviterShare,
+        upstream_share: upstreamShare,
+        branch_share: branchShare,
+        company_share: companyShare,
+        released_at: new Date().toISOString(),
+      }).then(({ error }: { error: { message: string } | null }) => {
+        if (error) console.error('[unlock] 写入release_records失败:', error.message);
       });
-
-      unlockedCount++;
     }
+
+    const failedResults = results.filter(r => !r.success);
+    
+    console.log(`[unlock] 完成: 成功${successCount}/${userProducts.length}, 分配失败${failedResults.length}`);
+    distributionLog.forEach(l => console.log(`  ${l}`));
 
     return NextResponse.json({
       success: true,
-      message: `成功解锁 ${unlockedCount} 个产品，5%智算金已分配到账`,
-      unlockedCount,
-      details: distributionDetails,
-      errors: errors.length > 0 ? errors : undefined
+      message: `成功解锁 ${successCount} 个产品`,
+      data: {
+        total: userProducts.length,
+        success: successCount,
+        distributions: results,
+        failedDistributions: failedResults,
+        log: distributionLog,
+      },
     });
-  } catch (err: any) {
-    console.error('[unlock] 解锁释放失败:', err);
-    return NextResponse.json({ success: false, message: err.message }, { status: 500 });
+
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error('[unlock] Error:', msg);
+    return NextResponse.json({ success: false, message: '解锁失败: ' + msg }, { status: 500 });
   }
 }
