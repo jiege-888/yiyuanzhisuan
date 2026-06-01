@@ -1,279 +1,275 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase-client';
+import { query, queryOne } from '@/storage/database/pg-client';
 
 export async function GET(request: NextRequest) {
   try {
-    const client = getSupabase();
-
-    // 1. 用户统计
-    const { data: users } = await client
-      .from('users')
-      .select('id, role, balance, points, created_at, is_active, provider_id, branch_id');
-    const allUsers = users || [];
-
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-    const totalUsers = allUsers.length;
-    const totalBranches = allUsers.filter((u: any) => u.role === 'branch').length;
-    const totalProviders = allUsers.filter((u: any) => u.role === 'provider').length;
-    const totalMembers = allUsers.filter((u: any) => u.role === 'member').length;
-
-    // 今日新注册
-    const todayNewUsers = allUsers.filter((u: any) => u.created_at >= todayStart).length;
-    const sevenDayNewUsers = allUsers.filter((u: any) => u.created_at >= sevenDaysAgo).length;
+    // 1. 用户统计 - 使用SQL聚合
+    const userBase = await queryOne<{
+      total_users: string; total_branches: string; total_providers: string; total_members: string;
+      today_new: string; seven_day_new: string;
+    }>(`
+      SELECT
+        COUNT(*)::text as total_users,
+        COALESCE(SUM(CASE WHEN role = 'branch' THEN 1 ELSE 0 END), 0)::text as total_branches,
+        COALESCE(SUM(CASE WHEN role = 'provider' THEN 1 ELSE 0 END), 0)::text as total_providers,
+        COALESCE(SUM(CASE WHEN role = 'member' THEN 1 ELSE 0 END), 0)::text as total_members,
+        COALESCE(SUM(CASE WHEN created_at >= '${todayStart}' THEN 1 ELSE 0 END), 0)::text as today_new,
+        COALESCE(SUM(CASE WHEN created_at >= '${sevenDaysAgo}' THEN 1 ELSE 0 END), 0)::text as seven_day_new
+      FROM users
+    `);
 
     // 7天注册趋势
-    const registrationTrend: Array<{ date: string; count: number }> = [];
-    for (let i = 6; i >= 0; i--) {
-      const dayStart = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
-      const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
-      const dayStr = dayStart.toISOString().split('T')[0];
-      const count = allUsers.filter((u: any) => u.created_at >= dayStart.toISOString() && u.created_at < dayEnd.toISOString()).length;
-      registrationTrend.push({ date: dayStr, count });
-    }
+    const registrationTrend = await query<{ date: string; count: string }>(`
+      SELECT d.date::text, COALESCE(COUNT(u.id), 0)::text as count
+      FROM generate_series(CURRENT_DATE - INTERVAL '6 days', CURRENT_DATE, '1 day') AS d(date)
+      LEFT JOIN users u ON u.created_at::date = d.date
+      GROUP BY d.date ORDER BY d.date
+    `);
 
     // 2. 产品/购买统计
-    const { data: products } = await client
-      .from('products')
-      .select('id, price, period, status, created_at, provider_id');
-    const allProducts = products || [];
+    const productBase = await queryOne<{
+      total_products: string; available: string; sold: string; total_sales: string;
+      today_purchase_count: string; today_purchase_amount: string;
+    }>(`
+      SELECT
+        COUNT(*)::text as total_products,
+        COALESCE(SUM(CASE WHEN status IN ('available','unlisted') THEN 1 ELSE 0 END), 0)::text as available,
+        COALESCE(SUM(CASE WHEN status = 'sold' THEN 1 ELSE 0 END), 0)::text as sold,
+        COALESCE(SUM(CASE WHEN status = 'sold' THEN price ELSE 0 END), 0)::text as total_sales
+      FROM products
+    `);
 
-    const { data: userProducts } = await client
-      .from('user_products')
-      .select('id, user_id, product_id, purchase_price, purchase_date, status, expire_date');
-    const allUserProducts = userProducts || [];
-
-    const totalProducts = allProducts.length;
-    const availableProducts = allProducts.filter((p: any) => p.status === 'available').length;
-    const soldProducts = allProducts.filter((p: any) => p.status === 'sold').length;
-
-    // 总销售金额
-    const totalSalesAmount = allUserProducts.reduce((s: number, up: any) => s + (Number(up.purchase_price) || 0), 0);
-
-    // 今日购买
-    const todayPurchases = allUserProducts.filter((up: any) => up.purchase_date >= todayStart);
-    const todayPurchaseAmount = todayPurchases.reduce((s: number, up: any) => s + (Number(up.purchase_price) || 0), 0);
-    const todayPurchaseCount = todayPurchases.length;
+    const todayPurchase = await queryOne<{
+      count: string; amount: string;
+    }>(`
+      SELECT
+        COUNT(*)::text as count,
+        COALESCE(SUM(purchase_price), 0)::text as amount
+      FROM user_products
+      WHERE purchase_date >= '${todayStart}'
+    `);
 
     // 7天购买趋势
-    const purchaseTrend: Array<{ date: string; count: number; amount: number }> = [];
-    for (let i = 6; i >= 0; i--) {
-      const dayStart = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
-      const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
-      const dayStr = dayStart.toISOString().split('T')[0];
-      const dayPurchases = allUserProducts.filter((up: any) => up.purchase_date >= dayStart.toISOString() && up.purchase_date < dayEnd.toISOString());
-      purchaseTrend.push({
-        date: dayStr,
-        count: dayPurchases.length,
-        amount: dayPurchases.reduce((s: number, up: any) => s + (Number(up.purchase_price) || 0), 0),
-      });
-    }
+    const purchaseTrend = await query<{ date: string; count: string; amount: string }>(`
+      SELECT d.date::text,
+        COALESCE(COUNT(up.id), 0)::text as count,
+        COALESCE(SUM(up.purchase_price), 0)::text as amount
+      FROM generate_series(CURRENT_DATE - INTERVAL '6 days', CURRENT_DATE, '1 day') AS d(date)
+      LEFT JOIN user_products up ON up.purchase_date::date = d.date
+      GROUP BY d.date ORDER BY d.date
+    `);
 
     // 产品周期分布
-    const productsByPeriod = [
-      { period: 3, count: allProducts.filter((p: any) => p.period === 3).length, amount: allProducts.filter((p: any) => p.period === 3).reduce((s: number, p: any) => s + (Number(p.price) || 0), 0) },
-      { period: 7, count: allProducts.filter((p: any) => p.period === 7).length, amount: allProducts.filter((p: any) => p.period === 7).reduce((s: number, p: any) => s + (Number(p.price) || 0), 0) },
-      { period: 15, count: allProducts.filter((p: any) => p.period === 15).length, amount: allProducts.filter((p: any) => p.period === 15).reduce((s: number, p: any) => s + (Number(p.price) || 0), 0) },
-      { period: 30, count: allProducts.filter((p: any) => p.period === 30).length, amount: allProducts.filter((p: any) => p.period === 30).reduce((s: number, p: any) => s + (Number(p.price) || 0), 0) },
-      { period: 90, count: allProducts.filter((p: any) => p.period === 90).length, amount: allProducts.filter((p: any) => p.period === 90).reduce((s: number, p: any) => s + (Number(p.price) || 0), 0) },
-    ].filter(p => p.count > 0);
+    const productsByPeriod = await query<{ period: number; count: string; amount: string }>(`
+      SELECT period, COUNT(*)::text as count, COALESCE(SUM(price), 0)::text as amount
+      FROM products GROUP BY period ORDER BY period
+    `);
 
-    // 3. 收益/释放统计
-    const { data: releaseRecords } = await client
-      .from('release_records')
-      .select('id, product_price, release_amount, member_share, provider_share, direct_referral_share, parent_provider_share, senior_provider_share, branch_share, company_share, created_at');
-    const allReleaseRecords = releaseRecords || [];
+    // 3. 收益释放统计 - 从 provider_revenue_distribution 聚合
+    const releaseBase = await queryOne<{
+      total_count: string; total_release: string; total_provider_share: string;
+      total_direct_share: string; total_parent_provider_share: string;
+      total_branch_share: string; total_company_share: string;
+    }>(`
+      SELECT
+        COUNT(*)::text as total_count,
+        COALESCE(SUM(market_fee), 0)::text as total_release,
+        COALESCE(SUM(provider_share), 0)::text as total_provider_share,
+        COALESCE(SUM(direct_reward), 0)::text as total_direct_share,
+        COALESCE(SUM(parent_provider_share), 0)::text as total_parent_provider_share,
+        COALESCE(SUM(branch_share), 0)::text as total_branch_share,
+        COALESCE(SUM(company_share), 0)::text as total_company_share
+      FROM provider_revenue_distribution
+    `);
 
-    const totalReleaseAmount = allReleaseRecords.reduce((s: number, r: any) => s + (Number(r.release_amount) || 0), 0);
-    const todayReleaseAmount = allReleaseRecords.filter((r: any) => r.created_at >= todayStart).reduce((s: number, r: any) => s + (Number(r.release_amount) || 0), 0);
+    // 会员总收益从 member_revenue 获取
+    const memberRevenueBase = await queryOne<{ total_member_share: string }>(`
+      SELECT COALESCE(SUM(profit), 0)::text as total_member_share FROM member_revenue
+    `);
+
+    const todayRelease = await queryOne<{ amount: string }>(`
+      SELECT COALESCE(SUM(market_fee), 0)::text as amount
+      FROM provider_revenue_distribution
+      WHERE created_at >= '${todayStart}'
+    `);
 
     // 7天释放趋势
-    const releaseTrend: Array<{ date: string; amount: number }> = [];
-    for (let i = 6; i >= 0; i--) {
-      const dayStart = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
-      const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
-      const dayStr = dayStart.toISOString().split('T')[0];
-      const dayReleases = allReleaseRecords.filter((r: any) => r.created_at >= dayStart.toISOString() && r.created_at < dayEnd.toISOString());
-      releaseTrend.push({ date: dayStr, amount: dayReleases.reduce((s: number, r: any) => s + (Number(r.release_amount) || 0), 0) });
-    }
-
-    // 释放分配统计
-    const releaseDistribution = {
-      memberShare: allReleaseRecords.reduce((s: number, r: any) => s + (Number(r.member_share) || 0), 0),
-      directReferralShare: allReleaseRecords.reduce((s: number, r: any) => s + (Number(r.direct_referral_share) || 0), 0),
-      providerShare: allReleaseRecords.reduce((s: number, r: any) => s + (Number(r.provider_share) || 0), 0),
-      parentProviderShare: allReleaseRecords.reduce((s: number, r: any) => s + (Number(r.parent_provider_share) || 0), 0),
-      seniorProviderShare: allReleaseRecords.reduce((s: number, r: any) => s + (Number(r.senior_provider_share) || 0), 0),
-      branchShare: allReleaseRecords.reduce((s: number, r: any) => s + (Number(r.branch_share) || 0), 0),
-      companyShare: allReleaseRecords.reduce((s: number, r: any) => s + (Number(r.company_share) || 0), 0),
-    };
+    const releaseTrend = await query<{ date: string; amount: string }>(`
+      SELECT d.date::text,
+        COALESCE(SUM(prd.market_fee), 0)::text as amount
+      FROM generate_series(CURRENT_DATE - INTERVAL '6 days', CURRENT_DATE, '1 day') AS d(date)
+      LEFT JOIN provider_revenue_distribution prd ON prd.created_at::date = d.date
+      GROUP BY d.date ORDER BY d.date
+    `);
 
     // 4. 额度统计
-    const { data: companyQuota } = await client
-      .from('company_quota')
-      .select('total_quota, used_quota, available_quota')
-      .limit(1)
-      .single();
+    const companyQuota = await queryOne<{
+      total_quota: string; used_quota: string; available_quota: string;
+    }>(`
+      SELECT total_quota::text, used_quota::text, available_quota::text
+      FROM company_quota LIMIT 1
+    `);
 
-    const { data: providerRecords } = await client
-      .from('providers')
-      .select('user_id, quota, used_quota, total_sales, branch_id');
+    const providerQuotaBase = await queryOne<{
+      total_quota: string; used_quota: string;
+    }>(`
+      SELECT
+        COALESCE(SUM(quota), 0)::text as total_quota,
+        COALESCE(SUM(used_quota), 0)::text as used_quota
+      FROM providers
+    `);
 
-    const totalProviderQuota = (providerRecords || []).reduce((s: number, p: any) => s + (Number(p.quota) || 0), 0);
-    const totalProviderUsedQuota = (providerRecords || []).reduce((s: number, p: any) => s + (Number(p.used_quota) || 0), 0);
+    // 5. 提现统计 - 从 energy_withdraw_requests 读取
+    const withdrawalBase = await queryOne<{
+      pending_count: string; pending_amount: string;
+      approved_count: string; approved_amount: string;
+    }>(`
+      SELECT
+        COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0)::text as pending_count,
+        COALESCE(SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END), 0)::text as pending_amount,
+        COALESCE(SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END), 0)::text as approved_count,
+        COALESCE(SUM(CASE WHEN status = 'approved' THEN actual_amount ELSE 0 END), 0)::text as approved_amount
+      FROM energy_withdraw_requests
+    `);
 
-    // 5. 提现统计
-    const { data: withdrawals } = await client
-      .from('withdrawals')
-      .select('id, user_id, amount, status, created_at');
-    const allWithdrawals = withdrawals || [];
-
-    const pendingWithdrawals = allWithdrawals.filter((w: any) => w.status === 'pending');
-    const pendingWithdrawAmount = pendingWithdrawals.reduce((s: number, w: any) => s + (Number(w.amount) || 0), 0);
-    const approvedWithdrawAmount = allWithdrawals.filter((w: any) => w.status === 'approved').reduce((s: number, w: any) => s + (Number(w.amount) || 0), 0);
-
-    // 6. 团队排名 - 服务商按销售金额排名
-    const teamRanking = await Promise.all(
-      (providerRecords || []).map(async (p: any) => {
-        const { data: providerUser } = await client
-          .from('users')
-          .select('username, real_name, phone')
-          .eq('id', p.user_id)
-          .single();
-
-        const { count: memberCount } = await client
-          .from('users')
-          .select('*', { count: 'exact', head: true })
-          .eq('provider_id', p.user_id)
-          .eq('role', 'member');
-
-        const { data: pReleaseRecords } = await client
-          .from('release_records')
-          .select('provider_share')
-          .eq('provider_id', p.user_id);
-
-        const totalRevenue = (pReleaseRecords || []).reduce((s: number, r: any) => s + (Number(r.provider_share) || 0), 0);
-
-        // 查询该服务商下的购买量
-        const { data: providerProducts } = await client
-          .from('products')
-          .select('id')
-          .eq('provider_id', p.user_id)
-          .eq('status', 'sold');
-        const soldCount = providerProducts?.length || 0;
-
-        return {
-          providerId: p.user_id,
-          providerName: providerUser?.username || providerUser?.real_name || '-',
-          phone: providerUser?.phone || '-',
-          quota: Number(p.quota) || 0,
-          usedQuota: Number(p.used_quota) || 0,
-          totalSales: Number(p.total_sales) || 0,
-          totalRevenue,
-          memberCount: memberCount || 0,
-          soldCount,
-        };
-      })
-    );
-
-    // 按销售金额排序
-    teamRanking.sort((a, b) => b.totalRevenue - a.totalRevenue);
+    // 6. 团队排名（服务商）
+    const teamRanking = await query<{
+      provider_id: string; provider_name: string; phone: string;
+      quota: string; used_quota: string; total_sales: string;
+      total_revenue: string; member_count: string; sold_count: string;
+    }>(`
+      SELECT
+        p.user_id as provider_id,
+        COALESCE(u.username, u.real_name, '-') as provider_name,
+        COALESCE(u.phone, '-') as phone,
+        COALESCE(p.quota, 0)::text as quota,
+        COALESCE(p.used_quota, 0)::text as used_quota,
+        COALESCE(p.total_sales, 0)::text as total_sales,
+        COALESCE((SELECT SUM(prd.provider_share) FROM provider_revenue_distribution prd WHERE prd.provider_id = p.user_id::text), 0)::text as total_revenue,
+        COALESCE((SELECT COUNT(*) FROM users WHERE provider_id = p.user_id AND role = 'member'), 0)::text as member_count,
+        COALESCE((SELECT COUNT(*) FROM products WHERE provider_id = p.user_id AND status = 'sold'), 0)::text as sold_count
+      FROM providers p
+      LEFT JOIN users u ON u.id = p.user_id
+      ORDER BY total_revenue DESC
+    `);
 
     // 7. 网点排名
-    const branchRanking = await Promise.all(
-      allUsers.filter((u: any) => u.role === 'branch').map(async (branch: any) => {
-        const branchProviders = (providerRecords || []).filter((p: any) => p.branch_id === branch.id);
-        const providerCount = branchProviders.length;
-
-        let branchRevenue = 0;
-        let branchSales = 0;
-        for (const bp of branchProviders) {
-          const { data: bReleaseRecords } = await client
-            .from('release_records')
-            .select('branch_share')
-            .eq('branch_id', branch.id);
-          branchRevenue = (bReleaseRecords || []).reduce((s: number, r: any) => s + (Number(r.branch_share) || 0), 0);
-          branchSales += Number(bp.total_sales) || 0;
-        }
-
-        const memberCount = allUsers.filter((u: any) => {
-          const uProvider = (providerRecords || []).find((p: any) => p.user_id === u.provider_id);
-          return u.role === 'member' && uProvider?.branch_id === branch.id;
-        }).length;
-
-        return {
-          branchId: branch.id,
-          branchName: branch.username || branch.real_name || '-',
-          phone: branch.phone || '-',
-          providerCount,
-          memberCount,
-          totalSales: branchSales,
-          totalRevenue: branchRevenue,
-          balance: Number(branch.balance) || 0,
-        };
-      })
-    );
-
-    branchRanking.sort((a, b) => b.totalRevenue - a.totalRevenue);
+    const branchRanking = await query<{
+      branch_id: string; branch_name: string; phone: string;
+      provider_count: string; member_count: string; total_sales: string;
+      total_revenue: string; balance: string;
+    }>(`
+      SELECT
+        u.id as branch_id,
+        COALESCE(u.username, u.real_name, '-') as branch_name,
+        COALESCE(u.phone, '-') as phone,
+        COALESCE((SELECT COUNT(*) FROM providers p WHERE p.branch_id = u.id), 0)::text as provider_count,
+        COALESCE((SELECT COUNT(*) FROM users m WHERE m.role = 'member' AND m.provider_id IN (SELECT p2.user_id FROM providers p2 WHERE p2.branch_id = u.id)), 0)::text as member_count,
+        COALESCE((SELECT SUM(p3.total_sales) FROM providers p3 WHERE p3.branch_id = u.id), 0)::text as total_sales,
+        COALESCE((SELECT SUM(prd.branch_share) FROM provider_revenue_distribution prd WHERE prd.branch_id = u.id::text), 0)::text as total_revenue,
+        COALESCE(u.balance, 0)::text as balance
+      FROM users u
+      WHERE u.role = 'branch'
+      ORDER BY total_revenue DESC
+    `);
 
     // 8. 平台总流通
-    const totalBalance = allUsers.reduce((s: number, u: any) => s + (Number(u.balance) || 0), 0);
-    const totalPoints = allUsers.reduce((s: number, u: any) => s + (Number(u.points) || 0), 0);
+    const circulationBase = await queryOne<{ total_balance: string; total_energy: string }>(`
+      SELECT
+        COALESCE(SUM(balance), 0)::text as total_balance,
+        COALESCE(SUM(energy_value), 0)::text as total_energy
+      FROM users
+    `);
 
+    // 构建返回数据
     return NextResponse.json({
       success: true,
       data: {
-        // 用户统计
         users: {
-          total: totalUsers,
-          branches: totalBranches,
-          providers: totalProviders,
-          members: totalMembers,
-          todayNew: todayNewUsers,
-          sevenDayNew: sevenDayNewUsers,
-          registrationTrend,
+          total: parseInt(userBase?.total_users || '0'),
+          branches: parseInt(userBase?.total_branches || '0'),
+          providers: parseInt(userBase?.total_providers || '0'),
+          members: parseInt(userBase?.total_members || '0'),
+          todayNew: parseInt(userBase?.today_new || '0'),
+          sevenDayNew: parseInt(userBase?.seven_day_new || '0'),
+          registrationTrend: (registrationTrend || []).map(r => ({
+            date: r.date, count: parseInt(r.count),
+          })),
         },
-        // 产品/购买统计
         products: {
-          total: totalProducts,
-          available: availableProducts,
-          sold: soldProducts,
-          totalSalesAmount,
-          todayPurchaseCount,
-          todayPurchaseAmount,
-          purchaseTrend,
-          productsByPeriod,
+          total: parseInt(productBase?.total_products || '0'),
+          available: parseInt(productBase?.available || '0'),
+          sold: parseInt(productBase?.sold || '0'),
+          totalSalesAmount: parseFloat(productBase?.total_sales || '0'),
+          todayPurchaseCount: parseInt(todayPurchase?.count || '0'),
+          todayPurchaseAmount: parseFloat(todayPurchase?.amount || '0'),
+          purchaseTrend: (purchaseTrend || []).map(p => ({
+            date: p.date, count: parseInt(p.count), amount: parseFloat(p.amount),
+          })),
+          productsByPeriod: (productsByPeriod || []).map(p => ({
+            period: p.period, count: parseInt(p.count), amount: parseFloat(p.amount),
+          })),
         },
-        // 收益释放统计
         revenue: {
-          totalReleaseAmount,
-          todayReleaseAmount,
-          releaseTrend,
-          releaseDistribution,
+          totalReleaseAmount: parseFloat(releaseBase?.total_release || '0'),
+          todayReleaseAmount: parseFloat(todayRelease?.amount || '0'),
+          releaseTrend: (releaseTrend || []).map(r => ({
+            date: r.date, amount: parseFloat(r.amount),
+          })),
+          releaseDistribution: {
+            memberShare: parseFloat(memberRevenueBase?.total_member_share || '0'),
+            directReferralShare: parseFloat(releaseBase?.total_direct_share || '0'),
+            providerShare: parseFloat(releaseBase?.total_provider_share || '0'),
+            parentProviderShare: parseFloat(releaseBase?.total_parent_provider_share || '0'),
+            seniorProviderShare: 0,
+            branchShare: parseFloat(releaseBase?.total_branch_share || '0'),
+            companyShare: parseFloat(releaseBase?.total_company_share || '0'),
+          },
         },
-        // 额度统计
         quota: {
-          companyQuota: companyQuota || { total_quota: 0, used_quota: 0, available_quota: 0 },
-          totalProviderQuota,
-          totalProviderUsedQuota,
+          companyQuota: companyQuota ? {
+            total_quota: parseFloat(companyQuota.total_quota),
+            used_quota: parseFloat(companyQuota.used_quota),
+            available_quota: parseFloat(companyQuota.available_quota),
+          } : { total_quota: 0, used_quota: 0, available_quota: 0 },
+          totalProviderQuota: parseFloat(providerQuotaBase?.total_quota || '0'),
+          totalProviderUsedQuota: parseFloat(providerQuotaBase?.used_quota || '0'),
         },
-        // 提现统计
         withdrawals: {
-          pendingCount: pendingWithdrawals.length,
-          pendingAmount: pendingWithdrawAmount,
-          approvedAmount: approvedWithdrawAmount,
+          pendingCount: parseInt(withdrawalBase?.pending_count || '0'),
+          pendingAmount: parseFloat(withdrawalBase?.pending_amount || '0'),
+          approvedAmount: parseFloat(withdrawalBase?.approved_amount || '0'),
         },
-        // 平台流通
         circulation: {
-          totalBalance,
-          totalPoints,
+          totalBalance: parseFloat(circulationBase?.total_balance || '0'),
+          totalPoints: parseFloat(circulationBase?.total_energy || '0'),
         },
-        // 团队排名
-        teamRanking,
-        branchRanking,
+        teamRanking: (teamRanking || []).map(t => ({
+          providerId: t.provider_id,
+          providerName: t.provider_name,
+          phone: t.phone,
+          quota: parseFloat(t.quota),
+          usedQuota: parseFloat(t.used_quota),
+          totalSales: parseFloat(t.total_sales),
+          totalRevenue: parseFloat(t.total_revenue),
+          memberCount: parseInt(t.member_count),
+          soldCount: parseInt(t.sold_count),
+        })),
+        branchRanking: (branchRanking || []).map(b => ({
+          branchId: b.branch_id,
+          branchName: b.branch_name,
+          phone: b.phone,
+          providerCount: parseInt(b.provider_count),
+          memberCount: parseInt(b.member_count),
+          totalSales: parseFloat(b.total_sales),
+          totalRevenue: parseFloat(b.total_revenue),
+          balance: parseFloat(b.balance),
+        })),
       },
     });
   } catch (error: any) {

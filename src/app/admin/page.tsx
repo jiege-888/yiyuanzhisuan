@@ -892,6 +892,11 @@ export default function AdminPage() {
       if (accountsTab === 'finance') {
         loadFinancialReport();
       }
+      // 每30秒自动刷新账户列表，确保会员提现/转账后数据及时更新
+      const interval = setInterval(() => {
+        loadAccountsData();
+      }, 30000);
+      return () => clearInterval(interval);
     }
     if (activeMenu === 'release') {
       loadReleaseRecords();
@@ -900,6 +905,11 @@ export default function AdminPage() {
     }
     if (activeMenu === 'dashboard') {
       loadDashboardData();
+      // 每30秒自动刷新数据总览
+      const interval = setInterval(() => {
+        loadDashboardData();
+      }, 30000);
+      return () => clearInterval(interval);
     }
     if (activeMenu === 'templates') {
       loadTemplates();
@@ -4839,8 +4849,8 @@ export default function AdminPage() {
       const res = await fetch(url);
       const data = await res.json();
       if (data.success) {
-        setReleaseRecords(data.data || []);
-        if (data.stats) setReleaseStats(data.stats);
+        setReleaseRecords(data.data?.records || []);
+        if (data.data?.stats) setReleaseStats(data.data.stats);
       }
     } catch (e) {
       console.error('加载释放收益记录失败', e);
