@@ -2852,7 +2852,7 @@ const [copySuccess, setCopySuccess] = useState(false);
                                 {(() => {
                                     // 分为待确认和持有中两组
                                     const pendingProducts = userProducts.filter(up => up.status === 'pending_confirm');
-                                    const activeProducts = userProducts.filter(up => up.status === 'holding' || up.status === 'pending_sell' || up.status === 'transferring' || up.status === 'repurchase_pending' || up.status === 'recycled' || up.status === 'repurchased');
+                                    const activeProducts = userProducts.filter(up => up.status === 'holding' || up.status === 'unlocked' || up.status === 'pending_sell' || up.status === 'transferring' || up.status === 'repurchase_pending' || up.status === 'recycled' || up.status === 'repurchased');
                                     
                                     // 按产品周期分组
                                     const groupByPeriod = (products: typeof userProducts) => {
@@ -2969,6 +2969,7 @@ const [copySuccess, setCopySuccess] = useState(false);
                                                                 <Badge
                                                                     className={
                                                                         up.status === "pending_confirm" ? "bg-amber-100 text-amber-700" :
+                                                                        up.status === "unlocked" ? "bg-green-100 text-green-700" :
                                                                         up.status === "holding" && revenueReleased ? "bg-green-100 text-green-700" : 
                                                                         up.status === "holding" && !isExpired ? "bg-blue-100 text-blue-700" : 
                                                                         up.status === "holding" && isExpired && !revenueReleased ? "bg-orange-100 text-orange-700" : 
@@ -2983,6 +2984,7 @@ const [copySuccess, setCopySuccess] = useState(false);
                                                                         "bg-gray-100 text-gray-700"
                                                                     }>
                                                                     {up.status === "pending_confirm" ? "已申购待确认" : 
+                                                                     up.status === "unlocked" ? "已解锁" : 
                                                                      up.status === "holding" && revenueReleased ? "收益已到账" : 
                                                                      up.status === "holding" && !isExpired ? "运算中" : 
                                                                      up.status === "holding" && isExpired && !revenueReleased ? "待释放" : 
@@ -3016,6 +3018,19 @@ const [copySuccess, setCopySuccess] = useState(false);
                                                                     >
                                                                         释放中...
                                                                     </Button>
+                                                                )}
+                                                                {up.status === "unlocked" && (
+                                                                    <>
+                                                                        <span className="text-xs text-green-600 mr-2">收益已到账</span>
+                                                                        <Button
+                                                                            size="sm"
+                                                                            className="bg-green-500 hover:bg-green-600 text-white"
+                                                                            onClick={() => {
+                                                                                setSelectedUserProduct(up);
+                                                                                setShowSellDialog(true);
+                                                                            }}>卖出
+                                                                        </Button>
+                                                                    </>
                                                                 )}
                                                                 {up.status === "holding" && revenueReleased && (
                                                                     <>

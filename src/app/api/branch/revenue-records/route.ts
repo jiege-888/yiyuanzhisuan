@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/pg-client';
+import { query } from '@/lib/supabase-client';
 import { authenticateRequest } from '@/lib/auth';
 
 // 获取服务网点收益记录
@@ -16,47 +16,51 @@ export async function GET(request: NextRequest) {
 
     const branchUserId = authUser.userId;
     const { searchParams } = new URL(request.url);
-    const type = searchParams.get('type');
     const status = searchParams.get('status');
+    const page = parseInt(searchParams.get('page') || '1');
+    const pageSize = parseInt(searchParams.get('pageSize') || '20');
 
-    let sql = 'SELECT * FROM branch_revenue_records WHERE branch_id = $1';
-    const params: any[] = [branchUserId];
-    let paramIdx = 2;
-
-    if (type) {
-      sql += ` AND type = $${paramIdx}`;
-      params.push(type);
-      paramIdx++;
-    }
-
+    let whereClause = `WHERE branch_id = '${branchUserId}'`;
     if (status) {
-      sql += ` AND status = $${paramIdx}`;
-      params.push(status);
+      whereClause += ` AND status = '${status}'`;
     }
-
-    sql += ' ORDER BY created_at DESC';
-
-    const data = await query(sql, params);
 
     // 统计
-    const stats = await query(
-      `SELECT 
-        COALESCE(SUM(CASE WHEN type = 'member_withdraw' THEN amount ELSE 0 END), 0) as total_member_withdraw,
-        COALESCE(SUM(CASE WHEN type = 'provider_withdraw' THEN amount ELSE 0 END), 0) as total_provider_withdraw,
-        COALESCE(SUM(CASE WHEN type = 'market_fee_share' THEN amount ELSE 0 END), 0) as total_market_fee_share,
-        COALESCE(SUM(CASE WHEN type = 'provider_upstream' THEN amount ELSE 0 END), 0) as total_provider_upstream,
-        COALESCE(SUM(amount), 0) as total_revenue,
-        COALESCE(SUM(CASE WHEN status = 'received' THEN amount ELSE 0 END), 0) as pending_amount,
-        COALESCE(SUM(CASE WHEN status = 'completed' THEN amount ELSE 0 END), 0) as completed_amount
-      FROM branch_revenue_records WHERE branch_id = $1`,
-      [branchUserId]
-    );
+    const statsResult = await query(`
+      SELECT 
+        COALESCE(SUM(branch_share), 0) as total_branch_share,
+        COALESCE(COUNT(*), 0) as total_count,
+        COALESCE(SUM(CASE WHEN status = 'completed' THEN branch_share ELSE 0 END), 0) as completed_amount
+      FROM branch_revenue_records ${whereClause}
+    `);
+
+    const stats = statsResult?.[0] || {};
+
+    // 记录列表
+    const offset = (page - 1) * pageSize;
+    const records = await query(`
+      SELECT 
+        brr.*,
+        m.username as member_name,
+        pv.username as provider_name
+      FROM branch_revenue_records brr
+      LEFT JOIN users m ON m.id::text = brr.member_id::text
+      LEFT JOIN users pv ON pv.id::text = brr.provider_id::text
+      ${whereClause}
+      ORDER BY brr.created_at DESC
+      LIMIT ${pageSize} OFFSET ${offset}
+    `);
 
     return NextResponse.json({
       success: true,
       data: {
-        records: data,
-        stats: stats[0] || {},
+        records: records || [],
+        stats,
+        pagination: {
+          page,
+          pageSize,
+          total: parseInt(String(stats.total_count || 0)),
+        },
       },
     });
   } catch (error) {

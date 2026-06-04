@@ -26,7 +26,7 @@ function getSupabaseClient() {
  * @param fromUserId 来源用户ID（可选，用于收益分配标识来源）
  * @returns 更新后的 energy_value 值，失败返回 null
  */
-export async function addEnergyValue(userId: string, amount: number, description: string = '', fromUserId?: string): Promise<number | null> {
+export async function addEnergyValue(userId: string, amount: number, description: string = '', fromUserId?: string, txType?: string): Promise<number | null> {
   const sb = getSupabaseClient();
   
   // 1. 读取当前值
@@ -84,7 +84,7 @@ export async function addEnergyValue(userId: string, amount: number, description
   // 3. 写入energy_transactions流水记录
   try {
     const record: Record<string, unknown> = {
-      type: fromUserId ? 'transfer_in' : 'revenue',
+      type: txType || (fromUserId ? 'transfer_in' : 'revenue'),
       amount: amount,
       to_user_id: userId,
       note: description || '智算金增加',

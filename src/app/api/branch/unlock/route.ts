@@ -183,13 +183,13 @@ export async function POST(request: Request) {
 
       // (1) 会员 +2%
       if (holder) {
-        const r = await addEnergyValue(holder.id, memberShare, `解锁收益-会员${holder.username}`, up.user_id);
+        const r = await addEnergyValue(holder.id, memberShare, `解锁收益-会员${holder.username}`, up.user_id, 'profit_release');
         results.push({ userId: holder.id, role: 'member', amount: memberShare, description: `会员${holder.username}`, success: r !== null });
       }
 
       // (2) 服务商 +2%
       if (provider) {
-        const r = await addEnergyValue(provider.id, providerShare, `解锁收益-服务商${provider.username}`, up.user_id);
+        const r = await addEnergyValue(provider.id, providerShare, `解锁收益-服务商${provider.username}`, up.user_id, 'provider_share');
         results.push({ userId: provider.id, role: 'provider', amount: providerShare, description: `服务商${provider.username}`, success: r !== null });
       }
 
@@ -197,14 +197,14 @@ export async function POST(request: Request) {
       const inviterUser = holder?.inviter_id ? userMap.get(holder.inviter_id) : null;
       if (inviterUser && inviterUser.role !== 'provider' && !allProviderMap.has(inviterUser.id)) {
         // 直推人是会员 → 给直推人
-        const r = await addEnergyValue(inviterUser.id, inviterShare, `解锁收益-直推${inviterUser.username}`, up.user_id);
+        const r = await addEnergyValue(inviterUser.id, inviterShare, `解锁收益-直推${inviterUser.username}`, up.user_id, 'direct_reward');
         results.push({ userId: inviterUser.id, role: 'inviter', amount: inviterShare, description: `直推${inviterUser.username}`, success: r !== null });
         actualDirectRewardTo = inviterUser.id;
         actualDirectReward = inviterShare;
       } else {
         // 无直推或直推人是服务商 → 归服务商
         if (provider) {
-          const r = await addEnergyValue(provider.id, inviterShare, `解锁收益-直推归服务商${provider.username}`, up.user_id);
+          const r = await addEnergyValue(provider.id, inviterShare, `解锁收益-直推归服务商${provider.username}`, up.user_id, 'provider_share');
           results.push({ userId: provider.id, role: 'provider_inviter', amount: inviterShare, description: `直推归服务商${provider.username}`, success: r !== null });
           actualProviderTotal += inviterShare;
           actualDirectRewardTo = provider.id;
@@ -222,7 +222,7 @@ export async function POST(request: Request) {
           if (parentProviderInfo?.user_id) {
             const upstreamProvider = userMap.get(parentProviderInfo.user_id);
             if (upstreamProvider && (upstreamProvider.role === 'provider' || allProviderMap.has(upstreamProvider.id))) {
-              const r = await addEnergyValue(upstreamProvider.id, upstreamShare, `解锁收益-上级服务商${upstreamProvider.username}`, up.user_id);
+              const r = await addEnergyValue(upstreamProvider.id, upstreamShare, `解锁收益-上级服务商${upstreamProvider.username}`, up.user_id, 'upstream_provider_share');
               results.push({ userId: upstreamProvider.id, role: 'upstream_provider', amount: upstreamShare, description: `上级服务商${upstreamProvider.username}`, success: r !== null });
               upstreamDistributed = true;
               actualUpstreamProviderId = parentProviderInfo.user_id;
@@ -236,7 +236,7 @@ export async function POST(request: Request) {
         const branchId = holder?.branch_id || provider?.branch_id;
         if (branchId) {
           const branchUser = branchUserMap.get(branchId);
-          const r = await addEnergyValue(branchId, upstreamShare, `解锁收益-上级归网点${branchUser?.username || ''}`, up.user_id);
+          const r = await addEnergyValue(branchId, upstreamShare, `解锁收益-上级归网点${branchUser?.username || ''}`, up.user_id, 'branch_share');
           results.push({ userId: branchId, role: 'branch_upstream', amount: upstreamShare, description: `上级归网点${branchUser?.username || ''}`, success: r !== null });
           actualBranchTotal += upstreamShare;
         }
@@ -246,19 +246,25 @@ export async function POST(request: Request) {
       if (holder?.branch_id) {
         const branchUser = branchUserMap.get(holder.branch_id);
         if (branchUser) {
-          const r = await addEnergyValue(holder.branch_id, branchShare, `解锁收益-网点${branchUser.username}`, up.user_id);
+          const r = await addEnergyValue(holder.branch_id, branchShare, `解锁收益-网点${branchUser.username}`, up.user_id, 'branch_share');
           results.push({ userId: holder.branch_id, role: 'branch', amount: branchShare, description: `网点${branchUser.username}`, success: r !== null });
         }
       }
 
       // (6) 公司运营 +0.4%
       if (adminUser) {
-        const r = await addEnergyValue(adminUser.id, companyShare, `解锁收益-公司运营`, up.user_id);
+        const r = await addEnergyValue(adminUser.id, companyShare, `解锁收益-公司运营`, up.user_id, 'company_share');
         results.push({ userId: adminUser.id, role: 'admin', amount: companyShare, description: '公司运营', success: r !== null });
       }
 
-      // (7) 标记为已释放
+      // (7) 标记为已释放 + 状态改为unlocked
       const releaseOk = await setRevenueReleased(up.id, true);
+      // 更新持仓状态为已解锁
+      try {
+        await sb.from('user_products').update({ status: 'unlocked' }).eq('id', up.id);
+      } catch (e: any) {
+        console.error('[unlock] 更新status=unlocked失败:', e?.message);
+      }
       
       if (releaseOk) {
         successCount++;
@@ -351,6 +357,58 @@ export async function POST(request: Request) {
       } catch (e: any) {
         console.error('[unlock] 写入member_revenue失败:', e?.message);
         distributionLog.push(`  → member_revenue 写入失败: ${e?.message}`);
+      }
+
+      // (11) 写入 branch_revenue_records 网点收益记录
+      const branchId = holder?.branch_id || provider?.branch_id;
+      if (branchId) {
+        try {
+          await sb.from('branch_revenue_records').insert({
+            branch_id: branchId,
+            product_id: up.product_id,
+            product_name: product.name || 'Token存储包',
+            product_price: productPrice,
+            member_id: up.user_id,
+            member_name: holder?.username || '',
+            provider_id: product.provider_id || '',
+            provider_name: provider?.username || '',
+            branch_share: actualBranchTotal,
+            company_share: actualCompanyShare,
+            total_amount: revenue5pct,
+            status: 'completed',
+            created_at: new Date().toISOString()
+          });
+          distributionLog.push(`  → branch_revenue_records 已写入`);
+        } catch (e: any) {
+          console.error('[unlock] 写入branch_revenue_records失败:', e?.message);
+          distributionLog.push(`  → branch_revenue_records 写入失败: ${e?.message}`);
+        }
+      }
+
+      // (12) 写入 admin_revenue_records 公司运营收益记录
+      if (adminUser) {
+        try {
+          await sb.from('admin_revenue_records').insert({
+            admin_id: adminUser.id,
+            product_id: up.product_id,
+            product_name: product.name || 'Token存储包',
+            product_price: productPrice,
+            member_id: up.user_id,
+            member_name: holder?.username || '',
+            provider_id: product.provider_id || '',
+            provider_name: provider?.username || '',
+            branch_id: branchId || '',
+            company_share: actualCompanyShare,
+            total_amount: revenue5pct,
+            status: 'completed',
+            created_at: new Date().toISOString()
+          });
+          distributionLog.push(`  → admin_revenue_records 已写入`);
+        } catch (e: any) {
+          console.error('[unlock] 写入admin_revenue_records失败:', e?.message);
+          // 表可能不存在，静默处理
+          distributionLog.push(`  → admin_revenue_records 写入失败: ${e?.message}`);
+        }
       }
     }
 
