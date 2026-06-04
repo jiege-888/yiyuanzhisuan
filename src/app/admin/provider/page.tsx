@@ -48,6 +48,7 @@ interface Member {
   phone: string;
   
   balance: number;
+  energy_value: number;
   real_name?: string;
   totalInvestment: number;
   holdingProducts: number;
@@ -1230,6 +1231,7 @@ export default function ProviderDashboard() {
                             <th className="px-4 py-3 text-left text-sm font-medium text-gray-500">用户名</th>
                             <th className="px-4 py-3 text-left text-sm font-medium text-gray-500">手机号</th>
                             <th className="px-4 py-3 text-left text-sm font-medium text-gray-500">收益</th>
+                            <th className="px-4 py-3 text-left text-sm font-medium text-gray-500">智算金余额</th>
                             <th className="px-4 py-3 text-left text-sm font-medium text-gray-500">累计投资</th>
                             <th className="px-4 py-3 text-left text-sm font-medium text-gray-500">持仓产品</th>
                             <th className="px-4 py-3 text-left text-sm font-medium text-gray-500">注册时间</th>
@@ -1241,6 +1243,7 @@ export default function ProviderDashboard() {
                               <td className="px-4 py-3 font-medium">{member.username}</td>
                               <td className="px-4 py-3 text-gray-500">{member.phone}</td>
                               <td className="px-4 py-3 text-amber-600">{member.balance}</td>
+                              <td className="px-4 py-3 text-blue-600 font-medium">{(member.energy_value || 0).toLocaleString()}</td>
                               <td className="px-4 py-3">{formatCurrency(member.totalInvestment)}</td>
                               <td className="px-4 py-3">{member.holdingProducts}</td>
                               <td className="px-4 py-3 text-gray-500">{formatDate(member.created_at)}</td>

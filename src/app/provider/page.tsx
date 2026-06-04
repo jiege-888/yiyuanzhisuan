@@ -2804,8 +2804,8 @@ export default function ProviderPage() {
                                                                 <p className="text-white text-lg font-bold">{chainData.members.length}</p>
                                                             </div>
                                                             <div className="p-3 bg-slate-800/60 rounded-lg text-center">
-                                                                <p className="text-slate-400 text-xs mb-1">总收益</p>
-                                                                <p className="text-amber-400 text-lg font-bold">{chainData.members.reduce((sum: number, m: any) => sum + (m.balance || 0), 0).toLocaleString()}</p>
+                                                                <p className="text-slate-400 text-xs mb-1">总智算金</p>
+                                                                <p className="text-amber-400 text-lg font-bold">{chainData.members.reduce((sum: number, m: any) => sum + (m.energyValue || 0), 0).toLocaleString()}</p>
                                                             </div>
                                                             <div className="p-3 bg-slate-800/60 rounded-lg text-center">
                                                                 <p className="text-slate-400 text-xs mb-1">总持有额度</p>
@@ -2836,8 +2836,8 @@ export default function ProviderPage() {
                                                                     {/* 会员数据 */}
                                                                     <div className="grid grid-cols-3 gap-3">
                                                                         <div className="bg-slate-900/50 rounded-md p-2.5 text-center">
-                                                                            <p className="text-slate-500 text-xs mb-1">收益</p>
-                                                                            <p className="text-amber-400 text-base font-bold">{(member.balance || 0).toLocaleString()}</p>
+                                                                            <p className="text-slate-500 text-xs mb-1">智算金</p>
+                                                                            <p className="text-amber-400 text-base font-bold">{(member.energyValue || 0).toLocaleString()}</p>
                                                                         </div>
                                                                         <div className="bg-slate-900/50 rounded-md p-2.5 text-center">
                                                                             <p className="text-slate-500 text-xs mb-1">持有产品</p>

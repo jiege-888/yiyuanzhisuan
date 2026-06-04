@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
     const offset = (page - 1) * pageSize;
     const members = await query(
       `SELECT 
-        id, username, phone, balance, created_at,
+        id, username, phone, balance, energy_value, created_at,
         real_name, wechat_account, alipay_account
        FROM users 
        ${whereClause}

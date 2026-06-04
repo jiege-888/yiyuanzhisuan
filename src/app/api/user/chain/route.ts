@@ -106,7 +106,7 @@ export async function GET(request: NextRequest) {
     // 如果当前用户是服务商，获取下级会员列表
     if (currentUser.role === 'provider') {
       const membersResult = await query(`
-        SELECT u.id, u.username, u.phone, u.real_name, u.balance,
+        SELECT u.id, u.username, u.phone, u.real_name, u.balance, u.energy_value,
           u.unique_id, u.inviter_id, u.created_at
         FROM users u WHERE u.provider_id = $1 AND u.role = 'member'
         ORDER BY u.created_at DESC
@@ -114,7 +114,7 @@ export async function GET(request: NextRequest) {
 
       chain.members = membersResult.map((m: any) => ({
         id: m.id, username: m.username, phone: m.phone, realName: m.real_name,
-        balance: m.balance || 0, uniqueId: m.unique_id, createdAt: m.created_at, roleName: '会员'
+        balance: m.balance || 0, energyValue: m.energy_value || 0, uniqueId: m.unique_id, createdAt: m.created_at, roleName: '会员'
       }));
 
       // 批量获取会员持仓统计
@@ -150,7 +150,7 @@ export async function GET(request: NextRequest) {
 
         chain.members = membersResult.map((m: any) => ({
           id: m.id, username: m.username, phone: m.phone, realName: m.real_name,
-          balance: m.balance || 0, uniqueId: m.unique_id,
+          balance: m.balance || 0, energyValue: m.energy_value || 0, uniqueId: m.unique_id,
           productCount: holdingsMap[m.id]?.productCount || 0,
           totalAmount: holdingsMap[m.id]?.totalAmount || 0,
           inviterId: m.inviter_id,
