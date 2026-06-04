@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
       const branchShare = Math.round(purchasePrice * 0.001 * 100) / 100;
       const companyShare = Math.round(purchasePrice * 0.004 * 100) / 100;
 
-      // 1. 会员 2% → energy_value
+      // 1. 会员 2% → energy_value（智算金）
       await execute(
         `UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2`,
         [memberShare, userId]

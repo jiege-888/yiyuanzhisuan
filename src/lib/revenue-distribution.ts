@@ -1,7 +1,7 @@
 /**
  * 收益分配工具函数
  * 
- * 5%释放金分润比例（基于产品市场费率 market_rate）：
+ * 5%释放收益分润比例（基于产品释放费率 market_rate）：
  * - 会员: market_rate * 40%（保底2%对应5%*40%=2%）
  * - 服务商: market_rate * 40%（保底2%对应5%*40%=2%）
  * - 直推奖励: market_rate * 5%（保底0.25%）
@@ -49,25 +49,25 @@ interface DistributionResult {
 export function calculateDistribution(
   productPrice: number,
   totalRate: number,    // 总收益率（如 5 表示 5%）
-  marketRate: number,   // 市场费率（如 5 表示 5%）
+  marketRate: number,   // 释放费率（如 5 表示 5%）
 ): Omit<DistributionResult, 'providerId' | 'parentProviderId' | 'inviterId' | 'branchId' | 'adminId'> {
   const totalAmount = productPrice * totalRate / 100;    // 总收益金额
-  const marketFee = productPrice * marketRate / 100;     // 市场费金额
-  const memberProfit = totalAmount - marketFee;          // 会员profit_rate收益 = 总收益 - 市场费
+  const releaseFee = productPrice * marketRate / 100;     // 释放收益金额
+  const memberProfit = totalAmount - releaseFee;          // 会员profit_rate收益 = 总收益 - 释放收益
 
   return {
     memberProfit: Math.round(memberProfit * 100) / 100,
-    memberReleaseShare: Math.round(marketFee * DISTRIBUTION_RATIOS.member * 100) / 100,
-    providerShare: Math.round(marketFee * DISTRIBUTION_RATIOS.provider * 100) / 100,
-    parentProviderShare: Math.round(marketFee * DISTRIBUTION_RATIOS.parentProvider * 100) / 100,
-    inviterShare: Math.round(marketFee * DISTRIBUTION_RATIOS.inviter * 100) / 100,
-    branchShare: Math.round(marketFee * DISTRIBUTION_RATIOS.branch * 100) / 100,
-    companyShare: Math.round(marketFee * DISTRIBUTION_RATIOS.company * 100) / 100,
+    memberReleaseShare: Math.round(releaseFee * DISTRIBUTION_RATIOS.member * 100) / 100,
+    providerShare: Math.round(releaseFee * DISTRIBUTION_RATIOS.provider * 100) / 100,
+    parentProviderShare: Math.round(releaseFee * DISTRIBUTION_RATIOS.parentProvider * 100) / 100,
+    inviterShare: Math.round(releaseFee * DISTRIBUTION_RATIOS.inviter * 100) / 100,
+    branchShare: Math.round(releaseFee * DISTRIBUTION_RATIOS.branch * 100) / 100,
+    companyShare: Math.round(releaseFee * DISTRIBUTION_RATIOS.company * 100) / 100,
   };
 }
 
 /**
- * 执行收益分配（写入各角色 balance）
+ * 执行收益分配（写入各角色 energy_value/智算金）
  * @returns 完整的分配结果
  */
 export async function distributeRevenue(params: {
@@ -75,7 +75,7 @@ export async function distributeRevenue(params: {
   productId: string;      // 产品ID
   productPrice: number;   // 产品价格
   totalRate: number;      // 总收益率
-  marketRate: number;     // 市场费率
+  marketRate: number;     // 释放费率
   orderId?: string;       // 关联订单ID
   distributionType: string; // 分配类型：buy/sell/transfer
 }): Promise<DistributionResult> {

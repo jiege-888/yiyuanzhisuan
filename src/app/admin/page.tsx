@@ -303,7 +303,7 @@ export default function AdminPage() {
   const [createEnergyNote, setCreateEnergyNote] = useState('');
   const [transferTo, setTransferTo] = useState('');
   
-  // 市场费分配子 Tab 状态
+  // 收益释放分配子 Tab 状态
   const [incomeTab, setIncomeTab] = useState<'overview' | 'detail' | 'withdraw' | 'provider' | 'member' | 'branch'>('overview');
   const [incomeStats, setIncomeStats] = useState<any>({
     totalIncome: 0,
@@ -394,7 +394,7 @@ export default function AdminPage() {
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [withdrawNote, setWithdrawNote] = useState('');
 
-  // 市场费分配相关状态
+  // 收益释放分配相关状态
   const [energyTab, setEnergyTab] = useState<'overview' | 'accounts' | 'transactions' | 'request' | 'withdraw'>('overview');
   const [energyData, setEnergyData] = useState<any>(null);
   const [energyAccounts, setEnergyAccounts] = useState<any[]>([]);
@@ -821,7 +821,7 @@ export default function AdminPage() {
     }
   }, []);
 
-  // 加载市场费分配数据
+  // 加载收益释放分配数据
   const loadIncomeData = useCallback(async (subType: string = 'overview') => {
     try {
       setIncomeLoading(true);
@@ -877,7 +877,7 @@ export default function AdminPage() {
     }
   }, [authLoading, user, loadData]);
 
-  // 市场费分配 tab 切换时加载数据
+  // 收益释放分配 tab 切换时加载数据
   useEffect(() => {
     if (activeMenu === 'income' && user) {
       loadIncomeData(incomeTab === 'withdraw' ? 'withdraw' : incomeTab === 'detail' ? 'detail' : 'overview');
@@ -1718,7 +1718,7 @@ export default function AdminPage() {
         {/* 能力值统计 Tab */}
         {overviewTab === 'energy' && (
           <div className="space-y-3 md:space-y-6">
-            {/* 核心指标卡片 - 市场费分配统计 */}
+            {/* 核心指标卡片 - 收益释放分配统计 */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2 md:gap-4">
               <Card className="mobile-compact-card bg-gradient-to-br from-yellow-500 to-orange-500 text-white">
                 <CardContent className="pt-6">
@@ -2817,12 +2817,12 @@ export default function AdminPage() {
       </Card>
     );
 
-    // 市场费分配Tab
+    // 收益释放分配Tab
     const renderEnergyManageTab = () => (
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle>市场费分配</CardTitle>
+            <CardTitle>收益释放分配</CardTitle>
             <Button variant="outline" onClick={handleRefreshEnergyList}>
               <RefreshCw className="w-4 h-4 mr-2" />刷新
             </Button>
@@ -3172,7 +3172,7 @@ export default function AdminPage() {
                               <th className="text-left p-2 text-sm text-gray-600">周期</th>
                               <th className="text-left p-2 text-sm text-gray-600">购买价</th>
                               <th className="text-left p-2 text-sm text-gray-600">预期收益</th>
-                              <th className="text-left p-2 text-sm text-gray-600">市场费</th>
+                              <th className="text-left p-2 text-sm text-gray-600">收益释放</th>
                               <th className="text-left p-2 text-sm text-gray-600">购买日期</th>
                               <th className="text-left p-2 text-sm text-gray-600">状态</th>
                             </tr>
@@ -3322,7 +3322,7 @@ export default function AdminPage() {
                 : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
             }`}
           >
-            市场费分配
+            收益释放分配
           </button>
           <button
             onClick={() => setMemberTab('stats')}
@@ -3447,7 +3447,7 @@ export default function AdminPage() {
         {/* 左侧标题 */}
         <div className="flex items-center gap-3 px-6 py-4 bg-purple-950/50">
           <TrendingUp className="w-5 h-5 text-white" />
-          <span className="text-white font-semibold text-lg">市场费分配</span>
+          <span className="text-white font-semibold text-lg">收益释放分配</span>
         </div>
         {/* 右侧Tab选项 - 简化版3Tab */}
         <div className="flex items-center gap-1 px-4">
@@ -3481,17 +3481,17 @@ export default function AdminPage() {
       {/* 收益总览内容 */}
       {incomeTab === 'overview' && (
         <>
-          {/* 统计卡片 - 市场费总额 + 今日 + 订单数 + 销售额 */}
+          {/* 统计卡片 - 收益释放总额 + 今日 + 订单数 + 销售额 */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
             <Card className="mobile-compact-card bg-gradient-to-br from-purple-500 to-purple-700 text-white">
               <CardContent className="p-4">
-                <div className="text-sm opacity-80 mobile-label">市场费总额</div>
+                <div className="text-sm opacity-80 mobile-label">收益释放总额</div>
                 <div className="text-3xl font-bold mt-1 mobile-num">¥{incomeStats.totalIncome.toLocaleString()}</div>
               </CardContent>
             </Card>
             <Card className="mobile-compact-card bg-gradient-to-br from-green-500 to-green-700 text-white">
               <CardContent className="p-4">
-                <div className="text-sm opacity-80 mobile-label">今日市场费</div>
+                <div className="text-sm opacity-80 mobile-label">今日收益释放</div>
                 <div className="text-3xl font-bold mt-1 mobile-num">¥{incomeStats.todayIncome.toLocaleString()}</div>
               </CardContent>
             </Card>
@@ -3570,11 +3570,11 @@ export default function AdminPage() {
             </CardContent>
           </Card>
 
-          {/* 收益来源分布 - 市场费分配比例 */}
+          {/* 收益来源分布 - 收益释放分配比例 */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-6">
             <Card>
               <CardHeader>
-                <CardTitle>市场费分配比例</CardTitle>
+                <CardTitle>收益释放分配比例</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="h-64">
@@ -3670,7 +3670,7 @@ export default function AdminPage() {
         {/* 左侧标题 */}
         <div className="flex items-center gap-3 px-6 py-4 bg-purple-950/50">
           <TrendingUp className="w-5 h-5 text-white" />
-          <span className="text-white font-semibold text-lg">市场费分配</span>
+          <span className="text-white font-semibold text-lg">收益释放分配</span>
         </div>
         {/* 右侧Tab选项 - 简化版3Tab */}
         <div className="flex items-center gap-1 px-4">
@@ -3701,11 +3701,11 @@ export default function AdminPage() {
         </div>
       </div>
 
-      {/* 收益明细内容 - 每笔购买订单的市场费分配 */}
+      {/* 收益明细内容 - 每笔购买订单的收益释放分配 */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle>收益明细（市场费分配）</CardTitle>
+            <CardTitle>收益明细（收益释放分配）</CardTitle>
             <div className="flex gap-2">
               <Button variant="outline" onClick={() => loadIncomeData('detail')}>
                 <RefreshCw className="w-4 h-4 mr-2" />刷新
@@ -3720,7 +3720,7 @@ export default function AdminPage() {
                 <TableHead>日期</TableHead>
                 <TableHead>产品</TableHead>
                 <TableHead>购买价</TableHead>
-                <TableHead>市场费</TableHead>
+                <TableHead>收益释放</TableHead>
                 <TableHead>会员2%</TableHead>
                 <TableHead>直推0.25%</TableHead>
                 <TableHead>服务商2%</TableHead>
@@ -3764,7 +3764,7 @@ export default function AdminPage() {
     </div>
   );
 
-  // 渲染提现管理（市场费分配Tab）
+  // 渲染提现管理（收益释放分配Tab）
   const renderWithdrawManagement = () => (
     <div className="space-y-3 md:space-y-6">
       {/* 统计卡片 */}
@@ -4028,7 +4028,7 @@ export default function AdminPage() {
               </Card>
               <Card className="mobile-compact-card bg-gradient-to-br from-orange-500 to-orange-700 text-white">
                 <CardContent className="p-4">
-                  <div className="text-sm opacity-80">市场费运营沉淀</div>
+                  <div className="text-sm opacity-80">收益释放运营沉淀</div>
                   <div className="text-3xl font-bold mt-1">¥{marketFeeOps.toLocaleString()}</div>
                 </CardContent>
               </Card>
@@ -4064,7 +4064,7 @@ export default function AdminPage() {
                       {feeRecords.slice(0, 10).map((r: any) => (
                         <TableRow key={r.id}>
                           <TableCell className="text-sm">{r.created_at ? new Date(r.created_at).toLocaleDateString() : '-'}</TableCell>
-                          <TableCell>{r.type === 'withdrawal_fee' ? '提现手续费' : r.type === 'market_fee_ops' ? '市场费运营' : r.type}</TableCell>
+                          <TableCell>{r.type === 'withdrawal_fee' ? '提现手续费' : r.type === 'market_fee_ops' ? '收益释放运营' : r.type}</TableCell>
                           <TableCell className="text-green-600 font-medium">+¥{Number(r.amount).toLocaleString()}</TableCell>
                           <TableCell>{r.source_role === 'member' ? '会员' : r.source_role === 'provider' ? '服务商' : r.source_role === 'branch' ? '服务网点' : r.source_role}</TableCell>
                           <TableCell className="text-sm text-gray-500 max-w-xs truncate">{r.note || '-'}</TableCell>
@@ -4222,7 +4222,7 @@ export default function AdminPage() {
                 <div className="flex gap-2 flex-wrap">
                   <div className="bg-green-50 px-3 py-1 rounded text-sm text-green-700">筛选合计: ¥{filteredTotal.toLocaleString()}</div>
                   <div className="bg-blue-50 px-3 py-1 rounded text-sm text-blue-700">提现手续费: ¥{filteredWithdrawFee.toLocaleString()}</div>
-                  <div className="bg-orange-50 px-3 py-1 rounded text-sm text-orange-700">市场费运营: ¥{filteredMarketFee.toLocaleString()}</div>
+                  <div className="bg-orange-50 px-3 py-1 rounded text-sm text-orange-700">收益释放运营: ¥{filteredMarketFee.toLocaleString()}</div>
                 </div>
               </div>
             </CardHeader>
@@ -4235,7 +4235,7 @@ export default function AdminPage() {
                     <select value={feeTypeFilter} onChange={(e) => setFeeTypeFilter(e.target.value)} className="border rounded-md px-3 py-1.5 text-sm bg-white">
                       <option value="all">全部类型</option>
                       <option value="withdrawal_fee">提现手续费</option>
-                      <option value="market_fee_ops">市场费运营</option>
+                      <option value="market_fee_ops">收益释放运营</option>
                     </select>
                   </div>
                   <div className="flex flex-col gap-1">
@@ -4282,7 +4282,7 @@ export default function AdminPage() {
                     {filteredFeeRecords.map((r: any) => (
                       <TableRow key={r.id}>
                         <TableCell className="text-sm">{r.created_at ? new Date(r.created_at).toLocaleString() : '-'}</TableCell>
-                        <TableCell>{r.type === 'withdrawal_fee' ? '提现手续费' : r.type === 'market_fee_ops' ? '市场费运营' : r.type}</TableCell>
+                        <TableCell>{r.type === 'withdrawal_fee' ? '提现手续费' : r.type === 'market_fee_ops' ? '收益释放运营' : r.type}</TableCell>
                         <TableCell className="text-green-600 font-medium">+¥{Number(r.amount).toLocaleString()}</TableCell>
                         <TableCell>{r.source_role === 'member' ? '会员' : r.source_role === 'provider' ? '服务商' : r.source_role === 'branch' ? '服务网点' : r.source_role}</TableCell>
                         <TableCell className="text-sm text-gray-500 max-w-xs truncate">{r.note || '-'}</TableCell>
@@ -4465,7 +4465,7 @@ export default function AdminPage() {
                 </Card>
                 <Card className="bg-gradient-to-br from-green-500 to-green-700 text-white">
                   <CardContent className="p-4">
-                    <div className="text-sm opacity-80">市场费运营沉淀</div>
+                    <div className="text-sm opacity-80">收益释放运营沉淀</div>
                     <div className="text-3xl font-bold mt-1">¥{marketOpsTotal.toLocaleString()}</div>
                     <div className="text-xs opacity-70 mt-1">公司分成0.4%</div>
                   </CardContent>
@@ -4481,7 +4481,7 @@ export default function AdminPage() {
               {/* 5%分配规则说明 */}
               <Card>
                 <CardHeader>
-                  <CardTitle>5%市场费分配规则</CardTitle>
+                  <CardTitle>5%收益释放分配规则</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="grid grid-cols-3 md:grid-cols-6 gap-3 text-center">
@@ -4577,7 +4577,7 @@ export default function AdminPage() {
                             <TableCell className="text-sm">{r.created_at ? new Date(r.created_at).toLocaleString() : '-'}</TableCell>
                             <TableCell>
                               <Badge variant="outline" className={r.type === 'withdrawal_fee' ? 'border-blue-300 text-blue-600' : r.type === 'market_fee_ops' ? 'border-green-300 text-green-600' : r.type === 'admin_transfer_in' ? 'border-cyan-300 text-cyan-600' : r.type === 'energy_withdrawal_fee' ? 'border-purple-300 text-purple-600' : 'border-gray-300'}>
-                                {r.type === 'withdrawal_fee' ? '提现手续费' : r.type === 'market_fee_ops' ? '公司运营分成' : r.type === 'admin_transfer_in' ? '智算金转入' : r.type === 'energy_withdrawal_fee' ? '能量值提现手续费' : r.type}
+                                {r.type === 'withdrawal_fee' ? '提现手续费' : r.type === 'market_fee_ops' ? '公司运营分成' : r.type === 'admin_transfer_in' ? '智算金转入' : r.type === 'energy_withdrawal_fee' ? '智算金提现手续费' : r.type}
                               </Badge>
                             </TableCell>
                             <TableCell className="text-green-600 font-medium">+¥{Number(r.amount).toLocaleString()}</TableCell>
@@ -5282,7 +5282,7 @@ export default function AdminPage() {
           <CardContent>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <div className="text-center p-4 bg-amber-50 rounded-lg">
-                <p className="text-2xl font-bold text-amber-700">¥{((circulation.totalPoints || 0)).toLocaleString()}</p>
+                <p className="text-2xl font-bold text-amber-700">¥{((circulation.totalEnergy || 0)).toLocaleString()}</p>
                 <p className="text-sm text-amber-600">智算金总量</p>
               </div>
               <div className="text-center p-4 bg-green-50 rounded-lg">
@@ -5290,7 +5290,7 @@ export default function AdminPage() {
                 <p className="text-sm text-green-600">收益余额</p>
               </div>
               <div className="text-center p-4 bg-orange-50 rounded-lg">
-                <p className="text-2xl font-bold text-orange-700">{((circulation.totalUserPoints || 0)).toLocaleString()}</p>
+                <p className="text-2xl font-bold text-orange-700">{((circulation.totalPoints || 0)).toLocaleString()}</p>
                 <p className="text-sm text-orange-600">积分总量</p>
               </div>
               <div className="text-center p-4 bg-blue-50 rounded-lg">
@@ -5379,7 +5379,7 @@ export default function AdminPage() {
             <TrendingUp className="w-5 h-5" />
             释放收益总统计
           </CardTitle>
-          <CardDescription>产品到期释放市场费收益，按5项比例分配到各方</CardDescription>
+          <CardDescription>产品到期释放收益释放收益，按5项比例分配到各方</CardDescription>
         </CardHeader>
         <CardContent>
           {/* 核心汇总 */}
@@ -5399,9 +5399,9 @@ export default function AdminPage() {
 
           </div>
 
-          {/* 市场费分配明细统计 */}
+          {/* 收益释放分配明细统计 */}
           <div className="border rounded-lg p-4">
-            <h4 className="font-semibold mb-3 text-sm">市场费分配去向明细</h4>
+            <h4 className="font-semibold mb-3 text-sm">收益释放分配去向明细</h4>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
               <div className="text-center p-3 bg-purple-50 dark:bg-purple-950/30 rounded-lg">
                 <div className="text-xs text-muted-foreground mb-1">会员 (2%)</div>
@@ -5442,7 +5442,7 @@ export default function AdminPage() {
       <Card>
         <CardHeader>
           <CardTitle>释放收益明细记录</CardTitle>
-          <CardDescription>产品到期释放市场费，按比例分配到各方（会员2% / 服务商2% / 直推0.25% / 上级0.25% / 网点0.1% / 智算中心0.4%）</CardDescription>
+          <CardDescription>产品到期释放收益释放，按比例分配到各方（会员2% / 服务商2% / 直推0.25% / 上级0.25% / 网点0.1% / 智算中心0.4%）</CardDescription>
         </CardHeader>
         <CardContent>
           {/* 筛选区 */}
@@ -5466,7 +5466,7 @@ export default function AdminPage() {
                     <TableHead>产品</TableHead>
                     <TableHead>释放时间</TableHead>
                     <TableHead>产品价格</TableHead>
-                    <TableHead>市场费总额</TableHead>
+                    <TableHead>收益释放总额</TableHead>
                     <TableHead>会员(2%)</TableHead>
                     <TableHead>服务商(2%)</TableHead>
                     <TableHead>直推(0.25%)</TableHead>
@@ -6709,7 +6709,7 @@ export default function AdminPage() {
                     <p className="font-medium text-green-600">{template.total_rate}%</p>
                   </div>
                   <div className="p-2 bg-orange-50 rounded">
-                    <p className="text-gray-500">市场费率</p>
+                    <p className="text-gray-500">收益释放率</p>
                     <p className="font-medium text-orange-600">{template.market_rate}%</p>
                   </div>
                   <div className="p-2 bg-blue-50 rounded">
@@ -6912,12 +6912,12 @@ export default function AdminPage() {
           </CardContent>
         </Card>
 
-        {/* 市场费分配配置 */}
+        {/* 收益释放分配配置 */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Zap className="w-5 h-5" />
-              市场费分配比例
+              收益释放分配比例
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -6985,7 +6985,7 @@ export default function AdminPage() {
             </div>
             <div className="mt-4 p-3 bg-gray-50 rounded-lg">
               <p className="text-sm text-gray-600">
-                <strong>分配说明：</strong>会员卖出产品时，需要用收益支付市场费。市场费按比例分配给各方。
+                <strong>分配说明：</strong>会员卖出产品时，需要用收益支付收益释放。收益释放按比例分配给各方。
                 <br />
                 <span className="text-xs text-gray-400">
                   总计: {(parseFloat(systemConfig['energy_allocation_provider'] || '0') + 
@@ -7827,7 +7827,7 @@ export default function AdminPage() {
     );
   };
 
-  // 智算中心 - 市场费分配（独立组件）
+  // 智算中心 - 收益释放分配（独立组件）
   const EnergyManagement = () => {
     const [energyTab, setEnergyTab] = useState<'overview' | 'accounts' | 'transactions' | 'request' | 'withdraw' | 'fee'>('overview');
     const [energyData, setEnergyData] = useState<any>(null);
@@ -8593,7 +8593,7 @@ export default function AdminPage() {
               </div>
               <div className="text-sm text-gray-500 mb-4">
                 <p>服务网点向智算中心购买收益，用于给服务商充值</p>
-                <p className="mt-1">服务商给会员充值收益，会员支付市场费</p>
+                <p className="mt-1">服务商给会员充值收益，会员支付收益释放</p>
               </div>
               <div className="max-h-40 overflow-y-auto">
                 <Table>
@@ -8679,7 +8679,7 @@ export default function AdminPage() {
                 {formatEnergy(marketTransfer.total)} 收益
               </div>
               <div className="text-sm text-gray-500 mb-4">
-                <p>会员卖出产品时支付市场费，按以下比例分配</p>
+                <p>会员卖出产品时支付收益释放，按以下比例分配</p>
               </div>
               <div className="grid grid-cols-5 gap-4 mb-4">
                 <div className="text-center p-3 bg-purple-50 rounded-lg">
@@ -9653,7 +9653,7 @@ export default function AdminPage() {
           {/* 左侧标题 */}
           <div className="flex items-center gap-3 px-6 py-4 bg-purple-950/50">
             <Zap className="w-5 h-5 text-white" />
-            <span className="text-white font-semibold text-lg">市场费分配</span>
+            <span className="text-white font-semibold text-lg">收益释放分配</span>
           </div>
           {/* 右侧Tab选项 */}
           <div className="flex items-center gap-1 px-4">
@@ -10625,7 +10625,7 @@ export default function AdminPage() {
                   />
                 </div>
                 <div>
-                  <Label>市场费率(%)</Label>
+                  <Label>收益释放率(%)</Label>
                   <Input 
                     type="number"
                     value={templateForm.market_rate}

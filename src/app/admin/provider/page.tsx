@@ -1703,7 +1703,7 @@ export default function ProviderDashboard() {
                                 <span>产品价格: ¥{Number(record.product_price).toLocaleString()}</span>
                               )}
                               {record.market_fee > 0 && (
-                                <span>市场费: ¥{Number(record.market_fee).toLocaleString()}</span>
+                                <span>收益释放: ¥{Number(record.market_fee).toLocaleString()}</span>
                               )}
                               {record.member_name && (
                                 <span>购买会员: {record.member_name}{record.member_phone ? ` (${record.member_phone})` : ''}</span>
@@ -1734,12 +1734,12 @@ export default function ProviderDashboard() {
               </CardContent>
             </Card>
 
-            {/* 能量值流转记录 */}
+            {/* 智算金流转记录 */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Coins className="w-5 h-5" />
-                  能量值流转记录
+                  智算金流转记录
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -2491,10 +2491,10 @@ export default function ProviderDashboard() {
                           <span className="text-sm md:text-xl font-bold text-white">¥{product.price.toLocaleString()}</span>
                         </div>
 
-                        {/* 市场费 */}
+                        {/* 收益释放 */}
                         <div className="mb-2 md:mb-3 p-2 md:p-3 rounded-lg bg-orange-500/20 border border-orange-500/40 text-orange-300 text-center text-xs md:text-sm">
                           <Zap className="w-3 h-3 md:w-4 md:h-4 inline mr-1" />
-                          市场费 {market_rate}% · 需收益 ¥{Math.round(product.price * market_rate / 100).toLocaleString()}
+                          收益释放 {market_rate}% · 需收益 ¥{Math.round(product.price * market_rate / 100).toLocaleString()}
                         </div>
 
                         {/* 状态指示 - 已售时显示持有人信息提示 */}

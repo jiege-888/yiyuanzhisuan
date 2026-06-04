@@ -418,7 +418,7 @@ const [copySuccess, setCopySuccess] = useState(false);
             }
 
             if (productsData.success) {
-                // 计算 market_fee（市场费 = 价格 × 市场利率 / 100）
+                // 计算 market_fee（收益释放 = 价格 × 市场利率 / 100）
                 // 去重：使用Map按id去重
                 const uniqueMap = new Map();
                 const rawProducts = productsData.data || [];
@@ -1008,14 +1008,14 @@ const [copySuccess, setCopySuccess] = useState(false);
     };
 
     const calculateProfit = (product: Product) => {
-        // 预期收益使用 total_rate，因为会员已预付市场费，到期后总收益全部归会员
+        // 预期收益使用 total_rate，因为会员已预付收益释放，到期后总收益全部归会员
         const totalRate = product.total_rate || 0;
         if (!totalRate) return 0;
         return Math.floor(product.price * totalRate / 100);
     };
 
     const calculateMarketFee = (product: Product) => {
-        // 使用产品自身的 market_rate 计算市场费，不使用硬编码
+        // 使用产品自身的 market_rate 计算收益释放，不使用硬编码
         const marketRate = product.market_rate || 0;
         if (!marketRate) return 0;
         return Math.floor(product.price * marketRate / 100);

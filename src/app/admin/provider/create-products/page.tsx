@@ -462,7 +462,7 @@ function CreateProductsContent() {
                             />
                           </div>
                           <div>
-                            <label className="text-gray-400 text-xs">市场费率（%）</label>
+                            <label className="text-gray-400 text-xs">释放费率（%）</label>
                             <Input
                               type="number"
                               value={product.market_rate}

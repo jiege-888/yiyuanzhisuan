@@ -76,7 +76,7 @@ export async function POST() {
     if (!member) continue;
 
     const price = up.purchase_price;
-    const marketFee = price * 0.05; // 总市场费5%
+    const releaseFee = price * 0.05; // 总释放收益5%
 
     // 服务商
     const providerInfo = providerMap.get(product.provider_id);
@@ -125,8 +125,8 @@ export async function POST() {
 
     // 验证总和
     const total = memberShare + providerShare + directReward + upstreamShare + branchShare + companyShare;
-    if (Math.abs(total - marketFee) > 0.01) {
-      console.log(`[write-revenue-records] 警告: 总和不等于5% price=${price} total=${total} marketFee=${marketFee}`);
+    if (Math.abs(total - releaseFee) > 0.01) {
+      console.log(`[write-revenue-records] 警告: 总和不等于5% price=${price} total=${total} releaseFee=${releaseFee}`);
     }
 
     // ====== 1. provider_revenue_distribution ======
@@ -136,7 +136,7 @@ export async function POST() {
       member_id: up.user_id,
       member_inviter_id: member.inviter_id || null,
       product_price: price,
-      market_fee: marketFee,
+      release_fee: releaseFee,
       provider_share: providerShare,
       direct_reward: directReward,
       direct_reward_to: directRewardTo,

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { addEnergyValue, setUserProductStatus } from '@/lib/energy-utils';
+import { setUserProductStatus } from '@/lib/energy-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -58,19 +58,15 @@ export async function POST(request: Request) {
         }
       }
 
-      const purchasePrice = Number(up.purchase_price) || 0;
-
-      // 会员获得本金
-      const balanceResult = await addEnergyValue(up.user_id, purchasePrice, `卖出回本-${up.id}`);
-
-      // 更新状态
+      // 本金线下交易，不在系统内处理
+      // 只更新产品状态为已售出
       const statusOk = await setUserProductStatus(up.id, 'sold', { sold: true });
 
-      if (statusOk && balanceResult !== null) {
+      if (statusOk) {
         successCount++;
-        sellLog.push(`产品${up.product_id}: 会员+${purchasePrice}本金`);
+        sellLog.push(`产品${up.product_id}: 已卖出(本金线下退还)`);
       } else {
-        sellLog.push(`产品${up.product_id}: 卖出失败 (balance=${balanceResult}, status=${statusOk})`);
+        sellLog.push(`产品${up.product_id}: 状态更新失败`);
       }
     }
 

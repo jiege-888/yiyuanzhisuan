@@ -94,7 +94,7 @@ export const products = pgTable(
     price: numeric("price", { precision: 12, scale: 2 }).notNull(),
     period: integer("period").notNull(), // 天数：3/7/15/30/90
     total_rate: numeric("total_rate", { precision: 5, scale: 2 }).notNull(), // 总收益率百分比
-    market_rate: numeric("market_rate", { precision: 5, scale: 2 }).notNull(), // 市场费率
+    market_rate: numeric("market_rate", { precision: 5, scale: 2 }).notNull(), // 释放费率
     profit_rate: numeric("profit_rate", { precision: 5, scale: 2 }).notNull(), // 收益率
     
     // 所属服务商（NULL 表示平台产品）

@@ -4,14 +4,14 @@
 // 
 // 【商业模式】
 // 会员购买GPU产品，只付本金
-// 到期卖出时需用收益支付市场费（没有收益需找服务商充值）
+// 到期卖出时释放收益按5%分配给各角色（智算金不足需找服务商充值）
 // 收益按比例分配给服务商、运营、上级、服务网点、直推
 // 
 // 【角色层级】
 // 智算中心 → 服务网点 → 服务商 → 会员
 //
 // 【核心机制】
-// - 收益：卖出时支付市场费，可找服务商充值
+// - 智算金：卖出时释放收益，可找服务商充值
 // - 积分：到期收益，可转收益
 // - 产品流转：会员间转让，服务商担保
 //
@@ -102,7 +102,7 @@ export interface ProductCycleConfig {
   cycleDays: number;
   totalProfitRate: number; // 总收益率
   memberProfitRate: number; // 会员实际到手收益率
-  releaseRate: number; // 收益支付比例（市场费）
+  releaseRate: number; // 释放收益比例
   minPrice: number;
   maxPrice: number;
 }
@@ -234,7 +234,7 @@ export const productTierConfig: Record<ProductTier, ProductConfig> = {
   },
 };
 
-// 收益（市场费）分配配置 — 按产品价格比例，合计5%
+// 释放收益分配配置 — 按产品价格比例，合计5%
 export const releaseDistribution = {
   member: 2, // 会员 2%
   referral: 0.25, // 直推 0.25%
@@ -245,7 +245,7 @@ export const releaseDistribution = {
   total: 5, // 总计 5%
 };
 
-// 市场费分配配置（旧，保留兼容）
+// 释放收益分配配置（旧，保留兼容）
 export const marketFeeDistribution = {
   member: 2,
   referral: 0.25,
@@ -519,7 +519,7 @@ export function calculateProductProfit(amount: number): {
   };
 }
 
-// 计算市场费分配（更新为新比例）
+// 计算释放收益分配（更新为新比例）
 export function calculateMarketFeeDistribution(amount: number): {
   total: number;
   provider: number;
@@ -540,7 +540,7 @@ export function calculateMarketFeeDistribution(amount: number): {
   };
 }
 
-// 计算购买总支付（新逻辑：只付本金，不付市场费）
+// 计算购买总支付（新逻辑：只付本金，释放收益到期结算）
 export function calculateTotalPay(amount: number, cycle: ProductCycle): {
   productAmount: number; // 本金
   totalPay: number; // 实付 = 本金

@@ -244,7 +244,7 @@ export async function POST(request: NextRequest) {
       [userProduct.id]
     );
 
-    // 为买家创建新的用户产品记录（不收市场费）
+    // 为买家创建新的用户产品记录（不收释放收益）
     const expectedProfit = Math.floor(transferPrice * profitRate / 100);
     const periodDays = product.period || 7;
 

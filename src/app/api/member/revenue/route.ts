@@ -146,7 +146,7 @@ export async function GET(request: NextRequest) {
       source: '产品持有收益',
       description: '会员通过持有Token存储包，按周期收益率获得收益。具体收益率以产品设定的total_rate为准。',
       timing: '产品到期后收益自动到账智算金账户，无需手动操作',
-      difference: '与服务商/服务网点收益不同：服务商服务网点收益来自市场业务（市场费分成），会员收益来自产品持有时长产生的回报',
+      difference: '与服务商/服务网点收益不同：服务商服务网点收益来自释放收益分成，会员收益来自产品持有时长产生的回报',
     };
 
     return NextResponse.json({

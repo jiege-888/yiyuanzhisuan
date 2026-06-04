@@ -42,42 +42,54 @@ export async function POST(request: Request) {
     const sb = getSupabaseClient();
 
     // 1. 获取待解锁的持仓记录
-    // 支持"补发"模式：已解锁但没分配记录的产品也会重新分配收益
     const { data: userProducts, error: upErr } = await sb
       .from('user_products')
-      .select('id, user_id, product_id, purchase_price, expected_profit, market_fee, revenue_released, status')
+      .select('id, user_id, product_id, purchase_price, expected_profit, market_fee, revenue_released, status, purchase_date, expire_date')
       .in('id', userProductIds);
 
     if (upErr || !userProducts || userProducts.length === 0) {
       return NextResponse.json({ success: false, message: '未找到可解锁的产品' }, { status: 404 });
     }
 
-    // 2. 检查哪些产品已有分配记录（避免重复分配）
-    const { data: existingRecords } = await sb
-      .from('release_records')
-      .select('user_product_id')
-      .in('user_product_id', userProductIds);
+    // 2. 先收集所有待解锁的product_id，用于去重查询
+    const allProductIds = userProducts.map((up: { product_id: string }) => up.product_id);
 
-    const releasedSet = new Set((existingRecords || []).map((r: { user_product_id: string }) => r.user_product_id));
+    // 3. 检查哪些产品已有分配记录（避免重复分配energy_value和重复写记录）
+    // 用 provider_revenue_distribution 去重（release_records表可能为空）
+    const { data: existingRecords } = await sb
+      .from('provider_revenue_distribution')
+      .select('product_id, member_id, product_price')
+      .in('product_id', allProductIds);
+
+    // 构建已分配的集合：product_id + member_id 组合去重
+    const releasedSet = new Set<string>(
+      (existingRecords || []).map((r: { product_id: string; member_id: string }) => `${r.product_id}|${r.member_id}`)
+    );
 
     // 过滤出需要分配收益的产品（未分配过的）
-    const toDistribute = userProducts.filter((up: { id: string }) => !releasedSet.has(up.id));
+    const toDistribute: Array<{ id: string; product_id: string; user_id: string; purchase_price: number; purchase_date?: string }> = userProducts.filter((up: { id: string; product_id: string; user_id: string }) => 
+      !releasedSet.has(`${up.product_id}|${up.user_id}`)
+    );
 
-    const productIds = toDistribute.map((up: { product_id: string }) => up.product_id);
+    if (toDistribute.length === 0) {
+      return NextResponse.json({ success: true, message: '所有产品已分配过收益', data: { total: userProducts.length, success: 0, skipped: userProducts.length } });
+    }
+
+    const productIds: string[] = toDistribute.map((up: { product_id: string }) => up.product_id);
     
-    // 3. 获取产品信息
+    // 4. 获取产品信息
     const { data: products } = await sb
       .from('products')
-      .select('id, name, price, period, total_rate, market_rate, profit_rate, provider_id')
+      .select('id, name, price, period, total_rate, market_rate, profit_rate, provider_id, code')
       .in('id', productIds);
 
     const productMap = new Map<string, any>((products || []).map((p: any) => [p.id, p]));
 
-    // 3. 获取所有相关的用户信息
+    // 4. 获取所有相关的用户信息
     const userIds = new Set<string>();
     const providerIds = new Set<string>();
     
-    for (const up of toDistribute) {
+    for (const up of toDistribute as any[]) {
       userIds.add(up.user_id);
       const product = productMap.get(up.product_id);
       if (product?.provider_id) providerIds.add(product.provider_id);
@@ -91,19 +103,19 @@ export async function POST(request: Request) {
 
     const userMap = new Map<string, any>((users || []).map((u: any) => [u.id, u]));
 
-    // 4. 获取服务商的上级服务商信息
+    // 5. 获取服务商的上级服务商信息
     const providerUserIds = [...providerIds];
     const { data: providers } = await sb
       .from('providers')
-      .select('user_id, id')
+      .select('user_id, id, parent_provider_id')
       .in('user_id', providerUserIds);
 
     const providerMap = new Map((providers || []).map((p: { user_id: string }) => [p.user_id, p]));
 
-    // 获取上级服务商（providers表的上级）
+    // 获取所有服务商（用于判断上级）
     const { data: allProviders } = await sb
       .from('providers')
-      .select('user_id, id');
+      .select('user_id, id, parent_provider_id');
 
     const allProviderMap = new Map<string, any>((allProviders || []).map((p: any) => [p.user_id, p]));
 
@@ -131,12 +143,12 @@ export async function POST(request: Request) {
       .limit(1);
     const adminUser = adminUsers?.[0];
 
-    // 5. 逐个处理解锁
+    // 6. 逐个处理解锁
     const results: DistributionResult[] = [];
     const distributionLog: string[] = [];
     let successCount = 0;
 
-    for (const up of userProducts) {
+    for (const up of toDistribute) {
       const product = productMap.get(up.product_id);
       if (!product) {
         distributionLog.push(`产品不存在: ${up.product_id}`);
@@ -160,6 +172,15 @@ export async function POST(request: Request) {
       const holder = userMap.get(up.user_id);
       const provider = product.provider_id ? userMap.get(product.provider_id) : null;
 
+      // 跟踪实际分配去向（用于写记录）
+      let actualDirectRewardTo: string | null = null;
+      let actualDirectReward: number = 0;
+      let actualProviderTotal = providerShare; // 服务商总收益（含直推归入）
+      let actualUpstreamProviderId: string | null = null;
+      let actualUpstreamShare: number = 0;
+      let actualBranchTotal = branchShare; // 网点总收益（含上级归入）
+      let actualCompanyShare = companyShare;
+
       // (1) 会员 +2%
       if (holder) {
         const r = await addEnergyValue(holder.id, memberShare, `解锁收益-会员${holder.username}`);
@@ -173,32 +194,40 @@ export async function POST(request: Request) {
       }
 
       // (3) 直推人 +0.25%
-      // 规则：直推人不是服务商 → 给直推人；无直推或直推人是服务商 → 归服务商
       const inviterUser = holder?.inviter_id ? userMap.get(holder.inviter_id) : null;
       if (inviterUser && inviterUser.role !== 'provider' && !allProviderMap.has(inviterUser.id)) {
         // 直推人是会员 → 给直推人
         const r = await addEnergyValue(inviterUser.id, inviterShare, `解锁收益-直推${inviterUser.username}`);
         results.push({ userId: inviterUser.id, role: 'inviter', amount: inviterShare, description: `直推${inviterUser.username}`, success: r !== null });
+        actualDirectRewardTo = inviterUser.id;
+        actualDirectReward = inviterShare;
       } else {
         // 无直推或直推人是服务商 → 归服务商
         if (provider) {
           const r = await addEnergyValue(provider.id, inviterShare, `解锁收益-直推归服务商${provider.username}`);
           results.push({ userId: provider.id, role: 'provider_inviter', amount: inviterShare, description: `直推归服务商${provider.username}`, success: r !== null });
+          actualProviderTotal += inviterShare;
+          actualDirectRewardTo = provider.id;
+          actualDirectReward = inviterShare;
         }
       }
 
       // (4) 上级服务商 +0.25%
-      // 规则：有上级服务商 → 给上级；无上级 → 归网点
       let upstreamDistributed = false;
       if (provider) {
-        const providerUserInfo = userMap.get(provider.id);
-        // 检查服务商的provider_id（即上级服务商）
-        if (providerUserInfo?.provider_id && providerUserInfo.provider_id !== provider.id) {
-          const upstreamProvider = userMap.get(providerUserInfo.provider_id);
-          if (upstreamProvider && (upstreamProvider.role === 'provider' || allProviderMap.has(upstreamProvider.id))) {
-            const r = await addEnergyValue(upstreamProvider.id, upstreamShare, `解锁收益-上级服务商${upstreamProvider.username}`);
-            results.push({ userId: upstreamProvider.id, role: 'upstream_provider', amount: upstreamShare, description: `上级服务商${upstreamProvider.username}`, success: r !== null });
-            upstreamDistributed = true;
+        const providerInfo = allProviderMap.get(provider.id);
+        if (providerInfo?.parent_provider_id) {
+          // 查上级服务商的user_id
+          const parentProviderInfo = allProviders?.find((p: any) => p.id === providerInfo.parent_provider_id);
+          if (parentProviderInfo?.user_id) {
+            const upstreamProvider = userMap.get(parentProviderInfo.user_id);
+            if (upstreamProvider && (upstreamProvider.role === 'provider' || allProviderMap.has(upstreamProvider.id))) {
+              const r = await addEnergyValue(upstreamProvider.id, upstreamShare, `解锁收益-上级服务商${upstreamProvider.username}`);
+              results.push({ userId: upstreamProvider.id, role: 'upstream_provider', amount: upstreamShare, description: `上级服务商${upstreamProvider.username}`, success: r !== null });
+              upstreamDistributed = true;
+              actualUpstreamProviderId = parentProviderInfo.user_id;
+              actualUpstreamShare = upstreamShare;
+            }
           }
         }
       }
@@ -209,6 +238,7 @@ export async function POST(request: Request) {
           const branchUser = branchUserMap.get(branchId);
           const r = await addEnergyValue(branchId, upstreamShare, `解锁收益-上级归网点${branchUser?.username || ''}`);
           results.push({ userId: branchId, role: 'branch_upstream', amount: upstreamShare, description: `上级归网点${branchUser?.username || ''}`, success: r !== null });
+          actualBranchTotal += upstreamShare;
         }
       }
 
@@ -240,29 +270,100 @@ export async function POST(request: Request) {
         distributionLog.push(`${product.name}: 标记revenue_released失败`);
       }
 
-      // (8) 写入分配记录（只记录核心字段，避免schema不匹配）
+      // (8) 写入 release_records 完整记录
       try {
         await sb.from('release_records').insert({
-          user_product_id: up.id,
-          user_id: up.user_id,
           product_id: up.product_id,
+          product_name: product.name || 'Token存储包',
+          product_price: productPrice,
+          release_amount: revenue5pct,
+          release_rate: 5,
+          member_id: up.user_id,
+          member_name: holder?.username || '',
+          member_share: memberShare,
+          direct_referral_id: holder?.inviter_id || null,
+          direct_referral_share: actualDirectReward,
+          provider_id: product.provider_id || '',
+          provider_name: provider?.username || '',
+          provider_share: actualProviderTotal,
+          parent_provider_id: actualUpstreamProviderId,
+          parent_provider_share: actualUpstreamShare,
+          branch_id: holder?.branch_id || provider?.branch_id || '',
+          branch_share: actualBranchTotal,
+          company_share: actualCompanyShare,
           created_at: new Date().toISOString()
         });
+        distributionLog.push(`  → release_records 已写入`);
       } catch (e: any) {
         console.error('[unlock] 写入release_records失败:', e?.message);
+        distributionLog.push(`  → release_records 写入失败: ${e?.message}`);
+      }
+
+      // (9) 写入 provider_revenue_distribution 完整记录
+      try {
+        await sb.from('provider_revenue_distribution').insert({
+          id: `prd-${up.id}-${Date.now()}`,
+          product_id: up.product_id,
+          provider_id: product.provider_id || '',
+          member_id: up.user_id,
+          member_inviter_id: holder?.inviter_id || null,
+          product_price: productPrice,
+          market_fee: productPrice * (Number(product.market_rate) || 5) / 100,
+          provider_share: actualProviderTotal,
+          direct_reward: actualDirectReward,
+          direct_reward_to: actualDirectRewardTo,
+          parent_provider_share: actualUpstreamShare,
+          parent_provider_id: actualUpstreamProviderId,
+          branch_share: actualBranchTotal,
+          branch_id: holder?.branch_id || provider?.branch_id || '',
+          company_share: actualCompanyShare,
+          status: 'completed',
+          created_at: new Date().toISOString()
+        });
+        distributionLog.push(`  → provider_revenue_distribution 已写入`);
+      } catch (e: any) {
+        console.error('[unlock] 写入provider_revenue_distribution失败:', e?.message);
+        distributionLog.push(`  → provider_revenue_distribution 写入失败: ${e?.message}`);
+      }
+
+      // (10) 写入 member_revenue 完整记录
+      try {
+        const purchaseDateStr = String((up as any).purchase_date || new Date().toISOString());
+        const holdingMs = Date.now() - new Date(purchaseDateStr).getTime();
+        const holdingDays = Math.max(1, Math.floor(holdingMs / (1000 * 60 * 60 * 24)));
+        await sb.from('member_revenue').insert({
+          user_id: up.user_id,
+          user_product_id: up.id,
+          principal: purchasePrice,
+          profit: memberShare,
+          total_amount: purchasePrice + memberShare,
+          converted_to_energy: 0,
+          status: 'completed',
+          product_name: product.name || 'Token存储包',
+          product_code: product.code || '',
+          product_period: product.period || 7,
+          total_rate: product.total_rate || 0,
+          profit_rate: product.profit_rate || 0,
+          market_rate: product.market_rate || 0,
+          holding_days: holdingDays
+        });
+        distributionLog.push(`  → member_revenue 已写入`);
+      } catch (e: any) {
+        console.error('[unlock] 写入member_revenue失败:', e?.message);
+        distributionLog.push(`  → member_revenue 写入失败: ${e?.message}`);
       }
     }
 
     const failedResults = results.filter(r => !r.success);
     
-    console.log(`[unlock] 完成: 成功${successCount}/${userProducts.length}, 分配失败${failedResults.length}`);
+    console.log(`[unlock] 完成: 成功${successCount}/${toDistribute.length}, 分配失败${failedResults.length}`);
     distributionLog.forEach(l => console.log(`  ${l}`));
 
     return NextResponse.json({
       success: true,
       message: `成功解锁 ${successCount} 个产品`,
       data: {
-        total: userProducts.length,
+        total: toDistribute.length,
         success: successCount,
         distributions: results,
         failedDistributions: failedResults,

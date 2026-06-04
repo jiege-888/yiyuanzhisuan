@@ -46,12 +46,12 @@ export async function POST(request: NextRequest) {
     // 3.1 删除资金流水记录
     await supabase.from('capital_flow_records').delete().eq('user_id', memberId);
 
-    // 3.2 删除能量值流水
+    // 3.2 删除智算金流水
     await supabase.from('energy_transactions')
       .delete()
       .or(`from_user_id.eq.${memberId},to_user_id.eq.${memberId}`);
 
-    // 3.3 删除能量值账户
+    // 3.3 删除智算金账户
     await supabase.from('energy_accounts').delete().eq('user_id', memberId);
 
     // 3.4 删除通知

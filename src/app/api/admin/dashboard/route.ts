@@ -249,8 +249,8 @@ export async function GET(request: NextRequest) {
         },
         circulation: {
           totalBalance: parseFloat(circulationBase?.total_balance || '0'),
-          totalPoints: parseFloat(circulationBase?.total_energy || '0'),
-          totalUserPoints: parseFloat(pointsBase?.total_points || '0'),
+          totalEnergy: parseFloat(circulationBase?.total_energy || '0'),
+          totalPoints: parseFloat(pointsBase?.total_points || '0'),
           adminEnergy: parseFloat((energyDistribution as any[])?.find(r => r.role === 'admin')?.total_energy || '0'),
           branchEnergy: parseFloat((energyDistribution as any[])?.find(r => r.role === 'branch')?.total_energy || '0'),
           providerEnergy: parseFloat((energyDistribution as any[])?.find(r => r.role === 'provider')?.total_energy || '0'),

@@ -3357,7 +3357,7 @@ export default function BranchPage() {
                   <CardContent className="pt-4">
                     <div className="flex items-center gap-2 mb-2">
                       <DollarSign className="w-5 h-5" />
-                      <span className="text-sm opacity-80">市场费分润(0.1%)</span>
+                      <span className="text-sm opacity-80">收益释放分润(0.1%)</span>
                     </div>
                     <p className="text-2xl font-bold">¥{Number(branchRevenueStats.marketFeeShare || 0).toLocaleString()}</p>
                   </CardContent>
@@ -3385,7 +3385,7 @@ export default function BranchPage() {
               {/* 操作区 */}
               <Card>
                 <CardHeader>
-                  <CardTitle>5%市场费分配规则</CardTitle>
+                  <CardTitle>5%收益释放分配规则</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="grid grid-cols-3 md:grid-cols-6 gap-3 text-center text-sm">
@@ -3415,7 +3415,7 @@ export default function BranchPage() {
                     </div>
                   </div>
                   <div className="mt-2 text-xs text-muted-foreground space-y-0.5">
-                    <p>* 网点获得市场费0.1%分成 + 无上级服务商时0.25%归网点</p>
+                    <p>* 网点获得收益释放0.1%分成 + 无上级服务商时0.25%归网点</p>
                   </div>
                 </CardContent>
               </Card>
@@ -3465,7 +3465,7 @@ export default function BranchPage() {
                             <p className="text-xs text-gray-500">
                               {r.type === 'member_withdraw' ? '会员提现' : 
                                r.type === 'provider_withdraw' ? '服务商提现' :
-                               r.type === 'market_fee_share' ? '市场费分润' :
+                               r.type === 'market_fee_share' ? '收益释放分润' :
                                r.type === 'provider_upstream' ? '无上级服务商分成(归网点)' :
                                r.type === 'withdraw_income' ? '提现收入' : r.type}
                             </p>
