@@ -302,10 +302,8 @@ const createProducts = (): GPUProduct[] => {
     const status = getRandomStatus();
     const seller = status === 'available' ? mockSellers[i % mockSellers.length] : undefined;
     
-    // 根据周期计算收益比例
-    const cycleRates = config.cycleDays === 3 
-      ? { totalProfitRate: 5, memberProfitRate: 2, releaseRate: 3 }
-      : { totalProfitRate: 10, memberProfitRate: 5, releaseRate: 5 };
+    // 只支持3天产品，固定5%收益分配
+    const cycleRates = { totalProfitRate: 5, memberProfitRate: 2, releaseRate: 5 };
     
     products.push({
       id: `provider-product-${i + 1}`,
@@ -441,17 +439,13 @@ export const calculateProductProfit = (product: GPUProduct): {
   };
 };
 
-// 根据周期获取收益比例
-export const getCycleProfitRates = (cycleDays: number): {
-  totalProfitRate: number; // 总收益率
-  memberProfitRate: number; // 会员实际到手
-  releaseRate: number; // 收益支付比例
+// 根据周期获取收益比例（当前只支持3天产品）
+export const getCycleProfitRates = (_cycleDays: number): {
+  totalProfitRate: number; // 总收益率 5%
+  memberProfitRate: number; // 会员实际到手 2%
+  releaseRate: number; // 收益分配 5%
 } => {
-  if (cycleDays <= 3) return { totalProfitRate: 5, memberProfitRate: 2, releaseRate: 3 };
-  if (cycleDays <= 7) return { totalProfitRate: 10, memberProfitRate: 5, releaseRate: 5 };
-  if (cycleDays <= 15) return { totalProfitRate: 20, memberProfitRate: 10, releaseRate: 10 };
-  if (cycleDays <= 30) return { totalProfitRate: 44, memberProfitRate: 22, releaseRate: 22 };
-  return { totalProfitRate: 120, memberProfitRate: 60, releaseRate: 60 };
+  return { totalProfitRate: 5, memberProfitRate: 2, releaseRate: 5 };
 };
 
 // 计算购买所需支付（新逻辑：只付本金）

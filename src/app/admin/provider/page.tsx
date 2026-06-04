@@ -2400,8 +2400,8 @@ export default function ProviderDashboard() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {filteredProducts.map((product) => {
                   const tier = getProductTier(product.price);
-                  const total_rate = product.total_rate || (product.period === 3 ? 5 : product.period === 7 ? 10 : product.period === 15 ? 20 : product.period === 30 ? 44 : 120);
-                  const profit_rate = product.profit_rate || (product.period === 3 ? 2 : product.period === 7 ? 5 : product.period === 15 ? 10 : product.period === 30 ? 22 : 60);
+                  const total_rate = product.total_rate || 5;
+                  const profit_rate = product.profit_rate || 2;
                   const market_rate = product.market_rate || (total_rate - profit_rate);
                   const st = statusLabel(product.status);
 

@@ -1,16 +1,14 @@
 /**
  * 收益分配工具函数
  * 
- * 5%释放收益分润比例（基于产品释放费率 market_rate）：
- * - 会员: market_rate * 40%（保底2%对应5%*40%=2%）
- * - 服务商: market_rate * 40%（保底2%对应5%*40%=2%）
- * - 直推奖励: market_rate * 5%（保底0.25%）
- * - 下级服务商: market_rate * 5%（保底0.25%）
- * - 服务网点: market_rate * 2%（保底0.1%）
- * - 总台运营: market_rate * 8%（保底0.4%）
- * 40% + 40% + 5% + 5% + 2% + 8% = 100% ✓
- * 
- * 会员实际到手 = profit_rate（total_rate - market_rate）+ market_fee * 40%
+ * 当前只支持3天产品，固定5%分配规则：
+ * - 会员: 2%
+ * - 服务商: 2%
+ * - 直推人: 0.25%
+ * - 上级服务商: 0.25%
+ * - 网点: 0.1%
+ * - 运营: 0.4%
+ * 合计: 5%
  */
 
 import { queryOne, execute } from '@/storage/database/pg-client';

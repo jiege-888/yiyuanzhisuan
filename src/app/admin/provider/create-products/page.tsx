@@ -173,11 +173,9 @@ function CreateProductsContent() {
     
     for (let i = 0; i < productCount; i++) {
       const price = basePrices[i % basePrices.length];
-      const period = i % 2 === 0 ? 3 : 7;
-      // 根据产品模板配置：3天=总5%/会员2%/收益3%，7天=总10%/会员5%/收益5%
-      const cycleRates = period === 3 
-        ? { total_rate: 5, profit_rate: 2, market_rate: 3 }
-        : { total_rate: 10, profit_rate: 5, market_rate: 5 };
+      const period = 3;
+      // 只支持3天产品：总5%/会员2%/收益3%
+      const cycleRates = { total_rate: 5, profit_rate: 2, market_rate: 3 };
       
       newProducts.push({
         id: `auto-${Date.now()}-${i}`,

@@ -1752,16 +1752,7 @@ function SettingsPage() {
               <span className="text-gray-400">%</span>
             </div>
           </div>
-          <div className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg">
-            <div>
-              <p className="text-white">7天产品总收益</p>
-              <p className="text-gray-400 text-sm">会员投资7天期产品的总收益率</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Input className="w-24 bg-slate-900 border-slate-700 text-white text-right" defaultValue="10" />
-              <span className="text-gray-400">%</span>
-            </div>
-          </div>
+
           <div className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg">
             <div>
               <p className="text-white">服务商分成比例</p>

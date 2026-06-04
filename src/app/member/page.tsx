@@ -2686,7 +2686,7 @@ const [copySuccess, setCopySuccess] = useState(false);
                                         <div className="absolute inset-0 flex items-center justify-center">
                                             <div className={`w-14 h-14 md:w-20 md:h-20 rounded-xl md:rounded-2xl bg-gradient-to-br ${tier.iconBg} border-2 ${tier.iconBorder} flex flex-col items-center justify-center backdrop-blur-sm shadow-2xl`}>
                                                 <span className={`text-lg md:text-2xl font-black ${tier.iconColor}`}>TK</span>
-                                                <span className={`text-[8px] md:text-[10px] font-bold mt-0.5 md:mt-1 ${tier.iconColor}`}>{product.period === 3 ? '3天' : '7天'}</span>
+                                                <span className={`text-[8px] md:text-[10px] font-bold mt-0.5 md:mt-1 ${tier.iconColor}`}>3天</span>
                                             </div>
                                         </div>
 
