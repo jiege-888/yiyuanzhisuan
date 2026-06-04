@@ -19,13 +19,14 @@ function getSupabaseClient() {
 }
 
 /**
- * 安全地增加用户的 energy_value
+ * 安全地增加用户的 energy_value，同时写入energy_transactions流水记录
  * @param userId 用户ID
  * @param amount 增加的金额（正数）
- * @param description 描述（用于日志）
+ * @param description 描述（用于流水记录的note）
+ * @param fromUserId 来源用户ID（可选，用于收益分配标识来源）
  * @returns 更新后的 energy_value 值，失败返回 null
  */
-export async function addEnergyValue(userId: string, amount: number, description: string = ''): Promise<number | null> {
+export async function addEnergyValue(userId: string, amount: number, description: string = '', fromUserId?: string): Promise<number | null> {
   const sb = getSupabaseClient();
   
   // 1. 读取当前值
@@ -66,22 +67,119 @@ export async function addEnergyValue(userId: string, amount: number, description
     
     if (recheck && Number(recheck.energy_value) === newVal) {
       console.log(`[addEnergyValue] 二次确认成功: userId=${userId}, newVal=${newVal}`);
-      return newVal;
-    }
-    
-    // 仍然失败，尝试直接用 RPC
-    console.warn(`[addEnergyValue] 尝试RPC更新: userId=${userId}`);
-    const { error: rpcErr } = await sb.rpc('rpc_execute', {
-      sql_query: `UPDATE users SET energy_value = ${newVal} WHERE id = '${userId}'`
-    });
-    
-    if (rpcErr) {
-      console.error(`[addEnergyValue] RPC也失败: ${rpcErr.message}`);
-      return null;
+    } else {
+      // 仍然失败，尝试直接用 RPC
+      console.warn(`[addEnergyValue] 尝试RPC更新: userId=${userId}`);
+      const { error: rpcErr } = await sb.rpc('rpc_execute', {
+        sql_query: `UPDATE users SET energy_value = ${newVal} WHERE id = '${userId}'`
+      });
+      
+      if (rpcErr) {
+        console.error(`[addEnergyValue] RPC也失败: ${rpcErr.message}`);
+        return null;
+      }
     }
   }
   
+  // 3. 写入energy_transactions流水记录
+  try {
+    const record: Record<string, unknown> = {
+      type: fromUserId ? 'transfer_in' : 'revenue',
+      amount: amount,
+      to_user_id: userId,
+      note: description || '智算金增加',
+    };
+    if (fromUserId) {
+      record.from_user_id = fromUserId;
+    }
+    await sb.from('energy_transactions').insert(record);
+  } catch (txErr) {
+    console.error(`[addEnergyValue] 写入流水失败: ${txErr}`);
+    // 流水写入失败不影响主流程
+  }
+  
   console.log(`[addEnergyValue] 成功: ${description}, userId=${userId}, ${currentVal} → ${newVal} (+${amount})`);
+  return newVal;
+}
+
+/**
+ * 安全地扣除用户的 energy_value，同时写入energy_transactions流水记录
+ * @param userId 用户ID
+ * @param amount 扣除的金额（正数）
+ * @param description 描述
+ * @param toUserId 去向用户ID（可选）
+ * @returns 更新后的 energy_value 值，失败返回 null
+ */
+export async function deductEnergyValue(userId: string, amount: number, description: string = '', toUserId?: string): Promise<number | null> {
+  const sb = getSupabaseClient();
+  
+  const { data: user, error: readErr } = await sb
+    .from('users')
+    .select('id, energy_value')
+    .eq('id', userId)
+    .single();
+  
+  if (readErr || !user) {
+    console.error(`[deductEnergyValue] 读取用户失败: userId=${userId}, error=${readErr?.message}`);
+    return null;
+  }
+  
+  const currentVal = Number(user.energy_value) || 0;
+  if (currentVal < amount) {
+    console.error(`[deductEnergyValue] 余额不足: userId=${userId}, 当前=${currentVal}, 需扣=${amount}`);
+    return null;
+  }
+  
+  const newVal = currentVal - amount;
+  
+  const { data: updated, error: updateErr } = await sb
+    .from('users')
+    .update({ energy_value: newVal })
+    .eq('id', userId)
+    .select('id, energy_value');
+  
+  if (updateErr) {
+    console.error(`[deductEnergyValue] 更新失败: userId=${userId}, error=${updateErr?.message}`);
+    return null;
+  }
+  
+  if (!updated || updated.length === 0) {
+    const { data: recheck } = await sb
+      .from('users')
+      .select('energy_value')
+      .eq('id', userId)
+      .single();
+    
+    if (recheck && Number(recheck.energy_value) === newVal) {
+      console.log(`[deductEnergyValue] 二次确认成功`);
+    } else {
+      const { error: rpcErr } = await sb.rpc('rpc_execute', {
+        sql_query: `UPDATE users SET energy_value = ${newVal} WHERE id = '${userId}'`
+      });
+      if (rpcErr) {
+        console.error(`[deductEnergyValue] RPC也失败: ${rpcErr.message}`);
+        return null;
+      }
+    }
+  }
+  
+  // 写入energy_transactions流水记录
+  try {
+    const record: Record<string, unknown> = {
+      type: toUserId ? 'transfer_out' : 'deduction',
+      amount: amount,
+      from_user_id: userId,
+      note: description || '智算金扣除',
+    };
+    if (toUserId) {
+      record.to_user_id = toUserId;
+    }
+    await sb.from('energy_transactions').insert(record);
+  } catch (txErr) {
+    console.error(`[deductEnergyValue] 写入流水失败: ${txErr}`);
+  }
+  
+  console.log(`[deductEnergyValue] 成功: ${description}, userId=${userId}, ${currentVal} → ${newVal} (-${amount})`);
   return newVal;
 }
 
@@ -121,7 +219,6 @@ export async function addBalance(userId: string, amount: number, description: st
   }
   
   if (!updated || updated.length === 0) {
-    console.error(`[addBalance] 更新返回空: userId=${userId}, 可能静默失败`);
     const { data: recheck } = await sb
       .from('users')
       .select('balance')
@@ -129,18 +226,15 @@ export async function addBalance(userId: string, amount: number, description: st
       .single();
     
     if (recheck && Number(recheck.balance) === newVal) {
-      console.log(`[addBalance] 二次确认成功: userId=${userId}, newVal=${newVal}`);
-      return newVal;
-    }
-    
-    console.warn(`[addBalance] 尝试RPC更新: userId=${userId}`);
-    const { error: rpcErr } = await sb.rpc('rpc_execute', {
-      sql_query: `UPDATE users SET balance = ${newVal} WHERE id = '${userId}'`
-    });
-    
-    if (rpcErr) {
-      console.error(`[addBalance] RPC也失败: ${rpcErr.message}`);
-      return null;
+      console.log(`[addBalance] 二次确认成功`);
+    } else {
+      const { error: rpcErr } = await sb.rpc('rpc_execute', {
+        sql_query: `UPDATE users SET balance = ${newVal} WHERE id = '${userId}'`
+      });
+      if (rpcErr) {
+        console.error(`[addBalance] RPC也失败: ${rpcErr.message}`);
+        return null;
+      }
     }
   }
   
@@ -149,78 +243,43 @@ export async function addBalance(userId: string, amount: number, description: st
 }
 
 /**
- * 安全地更新 user_products 的 revenue_released 标记
+ * 设置 user_products 记录的 revenue_released 标记
+ * @param userProductId 用户产品ID
+ * @param released 是否已释放
+ * @returns 是否成功
  */
-export async function setRevenueReleased(userProductId: string, value: boolean): Promise<boolean> {
+export async function setRevenueReleased(userProductId: string, released: boolean): Promise<boolean> {
   const sb = getSupabaseClient();
-  
-  const { data: updated, error } = await sb
+  const { error } = await sb
     .from('user_products')
-    .update({ revenue_released: value })
-    .eq('id', userProductId)
-    .select('id, revenue_released');
+    .update({ revenue_released: released })
+    .eq('id', userProductId);
   
   if (error) {
-    console.error(`[setRevenueReleased] 更新失败: id=${userProductId}, error=${error.message}`);
+    console.error(`[setRevenueReleased] 失败: id=${userProductId}, error=${error.message}`);
     return false;
   }
-  
-  if (!updated || updated.length === 0) {
-    console.error(`[setRevenueReleased] 更新返回空: id=${userProductId}, 可能静默失败`);
-    // 二次确认
-    const { data: recheck } = await sb
-      .from('user_products')
-      .select('revenue_released')
-      .eq('id', userProductId)
-      .single();
-    
-    if (recheck && recheck.revenue_released === value) {
-      return true;
-    }
-    
-    // 尝试RPC
-    const { error: rpcErr } = await sb.rpc('rpc_execute', {
-      sql_query: `UPDATE user_products SET revenue_released = ${value} WHERE id = '${userProductId}'`
-    });
-    
-    if (rpcErr) {
-      console.error(`[setRevenueReleased] RPC也失败: ${rpcErr.message}`);
-      return false;
-    }
-  }
-  
-  console.log(`[setRevenueReleased] 成功: id=${userProductId}, value=${value}`);
   return true;
 }
 
 /**
- * 安全地更新 user_products 的 status 和 sold 标记
+ * 设置 user_products 记录的状态
+ * @param userProductId 用户产品ID
+ * @param status 新状态
+ * @param extraFields 额外更新字段
+ * @returns 是否成功
  */
-export async function setUserProductStatus(
-  userProductId: string, 
-  status: string, 
-  extraFields?: Record<string, unknown>
-): Promise<boolean> {
+export async function setUserProductStatus(userProductId: string, status: string, extraFields?: Record<string, unknown>): Promise<boolean> {
   const sb = getSupabaseClient();
-  
   const updateData: Record<string, unknown> = { status, ...extraFields };
-  
-  const { data: updated, error } = await sb
+  const { error } = await sb
     .from('user_products')
     .update(updateData)
-    .eq('id', userProductId)
-    .select('id, status');
+    .eq('id', userProductId);
   
   if (error) {
-    console.error(`[setUserProductStatus] 更新失败: id=${userProductId}, error=${error.message}`);
+    console.error(`[setUserProductStatus] 失败: id=${userProductId}, error=${error.message}`);
     return false;
   }
-  
-  if (!updated || updated.length === 0) {
-    console.error(`[setUserProductStatus] 更新返回空: id=${userProductId}`);
-    return false;
-  }
-  
-  console.log(`[setUserProductStatus] 成功: id=${userProductId}, status=${status}`);
   return true;
 }

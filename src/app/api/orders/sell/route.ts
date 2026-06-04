@@ -67,22 +67,39 @@ export async function POST(request: NextRequest) {
       const branchShare = Math.round(purchasePrice * 0.001 * 100) / 100;
       const companyShare = Math.round(purchasePrice * 0.004 * 100) / 100;
 
+      const productName = product?.name || '未知产品';
+
       // 1. 会员 2% → energy_value（智算金）
       await execute(
         `UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2`,
         [memberShare, userId]
+      );
+      await execute(
+        `INSERT INTO energy_transactions (user_id, type, amount, from_user_id, to_user_id, note, created_at)
+         VALUES ($1, 'profit_release', $2, NULL, $1, $3, NOW())`,
+        [userId, memberShare, `产品「${productName}」到期释放：会员2% ¥${memberShare}`]
       );
 
       // 2. 直推人 0.25%
       const member = await queryOne('SELECT inviter_id FROM users WHERE id = $1', [userId]);
       if (directReward > 0 && member?.inviter_id) {
         await execute('UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2', [directReward, member.inviter_id]);
+        await execute(
+          `INSERT INTO energy_transactions (user_id, type, amount, from_user_id, to_user_id, note, created_at)
+           VALUES ($1, 'profit_release', $2, $3, $1, $4, NOW())`,
+          [member.inviter_id, directReward, userId, `产品「${productName}」到期释放：直推0.25% ¥${directReward}`]
+        );
       }
 
       // 3. 服务商 2%
       const providerId = product?.provider_id || userProduct.seller_id;
       if (providerShare > 0 && providerId) {
         await execute('UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2', [providerShare, providerId]);
+        await execute(
+          `INSERT INTO energy_transactions (user_id, type, amount, from_user_id, to_user_id, note, created_at)
+           VALUES ($1, 'profit_release', $2, $3, $1, $4, NOW())`,
+          [providerId, providerShare, userId, `产品「${productName}」到期释放：服务商2% ¥${providerShare}`]
+        );
       }
 
       // 4. 上级服务商 0.25%（无上级时归网点）
@@ -93,6 +110,11 @@ export async function POST(request: NextRequest) {
         if (parentProvider?.user_id) {
           actualParentProviderId = providerInfo.parent_provider_id;
           await execute('UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2', [parentShare, parentProvider.user_id]);
+          await execute(
+            `INSERT INTO energy_transactions (user_id, type, amount, from_user_id, to_user_id, note, created_at)
+             VALUES ($1, 'profit_release', $2, $3, $1, $4, NOW())`,
+            [parentProvider.user_id, parentShare, userId, `产品「${productName}」到期释放：上级服务商0.25% ¥${parentShare}`]
+          );
         }
       }
 
@@ -101,6 +123,13 @@ export async function POST(request: NextRequest) {
       const branchTotalShare = branchShare + noParentExtra;
       if (providerInfo?.branch_id && branchTotalShare > 0) {
         await execute('UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2', [branchTotalShare, providerInfo.branch_id]);
+        const branchNoteParts = [`网点0.1% ¥${branchShare}`];
+        if (noParentExtra > 0) branchNoteParts.push(`无上级补0.25% ¥${noParentExtra}`);
+        await execute(
+          `INSERT INTO energy_transactions (user_id, type, amount, from_user_id, to_user_id, note, created_at)
+           VALUES ($1, 'profit_release', $2, $3, $1, $4, NOW())`,
+          [providerInfo.branch_id, branchTotalShare, userId, `产品「${productName}」到期释放：${branchNoteParts.join(' + ')}`]
+        );
       }
 
       // 6. 公司运营 0.4%
@@ -108,15 +137,13 @@ export async function POST(request: NextRequest) {
         const adminUser = await queryOne("SELECT id FROM users WHERE role = 'admin' LIMIT 1");
         if (adminUser) {
           await execute('UPDATE users SET energy_value = COALESCE(energy_value, 0) + $1, updated_at = NOW() WHERE id = $2', [companyShare, adminUser.id]);
+          await execute(
+            `INSERT INTO energy_transactions (user_id, type, amount, from_user_id, to_user_id, note, created_at)
+             VALUES ($1, 'profit_release', $2, $3, $1, $4, NOW())`,
+            [adminUser.id, companyShare, userId, `产品「${productName}」到期释放：公司运营0.4% ¥${companyShare}`]
+          );
         }
       }
-
-      // 写入energy_transactions
-      await execute(
-        `INSERT INTO energy_transactions (user_id, type, amount, note, created_at)
-         VALUES ($1, 'profit_release', $2, $3, NOW())`,
-        [userId, memberShare, `产品「${product?.name || '未知产品'}」到期释放智算金：会员2%¥${memberShare}`]
-      );
 
       // 记录member_revenue
       const holdingHours = (now.getTime() - new Date(userProduct.purchase_date).getTime()) / (1000 * 60 * 60);
